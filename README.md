@@ -4,9 +4,9 @@
 
 This repo is an offshoot of a larger project I'm working on. I'm looking at how acoustic changes to the sounds that we use in langauge affect our ability to clearly communicate. This repo comes from an attempt to see whether hypothetical versions of English with the acoustics of two of our language sounds swapped would be hypothetically _easier_ or _harder_ to understand. 
 
-Because of a bug in the code, initial inspections seemed to suggest that basically swapping any two sounds made our language harder to understand, which would be an interesting suggestion of some sort of optimization in our langauge. However, after realizing and fixing this bug, the results are not so obvious and this question was put on the backburner.
+Because of a bug in the code, initial inspections seemed to suggest that swapping basically any two sounds in English made it harder to understand. It's more complicated than this, but if that were true, it would be an interesting hint at certain types of optimizations happening behind the scenes. However, after I realized and fixed this bug, the results were not so obvious and I put this question on the backburner.
 
-## Why I uploaded it
+## Why I uploaded this
 
 I uploaded this excerpt as a way of showcasing how far I've come in terms of managing large amounts of data in R, and how useful the tidyverse is. 
 
