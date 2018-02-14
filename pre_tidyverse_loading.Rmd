@@ -1,0 +1,1339 @@
+---
+title: "LabPhonPoster"
+author: "Zach Burchill"
+date: "Jan17, 2017"
+output: pdf_document
+---
+
+```{r libraries}
+library(magrittr)
+library(dplyr)
+library(tidyr)
+library(purrr)
+library(ggplot2)
+library(Hmisc)
+library(gridExtra)
+library(ggrepel)
+library(viridis)
+
+library(knitr)
+opts_chunk$set(comment="",
+               echo=FALSE, 
+               warning=TRUE, message=TRUE)
+clean_cache(clean = TRUE, path = opts_chunk$get("cache.path"))
+```
+
+```{r functions}
+# weighted_average <-function(df) {
+#   total_frequency=sum(df$Frequency)
+#   return(sum(df$Confusability*df$Frequency)/total_frequency)
+# }
+
+weighted_average <-function(df) {
+  total_frequency=sum(10^(df$Frequency))
+  return(sum(df$Confusability*(10^df$Frequency))/total_frequency)
+}
+
+modify <- function(l) {
+  # return this as an expression
+  substr(format(l),2,99)
+}
+
+g_legend<-function(a.gplot){ 
+  tmp <- ggplot_gtable(ggplot_build(a.gplot)) 
+  leg <- which(sapply(tmp$grobs, function(x) x$name) == "guide-box") 
+  legend <- tmp$grobs[[leg]] 
+  return(legend)
+} 
+
+g_x_axis<-function(a.gplot){ 
+  tmp <- ggplot_gtable(ggplot_build(a.gplot))
+  leg <- which(grepl("axis.title.x",sapply(tmp$grobs, function(x) x$name)))
+  legend <- tmp$grobs[[leg]] 
+  return(legend)
+} 
+
+get_good_names<-function(names,vowelies=FALSE) {
+  if (vowelies) {
+    return(sapply(names,function(x) sub("vowels|consonants","",x),USE.NAMES = FALSE))
+  }
+  names <- as.character(names)
+  if (grepl("swap",names[1])) {
+    indices <- sapply(names,function(x) 
+      which(strsplit(x,"_")[[1]]=="swap")[1],USE.NAMES = FALSE)
+  }
+  else {
+    indices <- sapply(names,function(x) 
+      which(strsplit(x,"_")[[1]]=="to")[1],USE.NAMES = FALSE)
+  }
+  new_names <- mapply(function(index,name) {
+                        paste0(strsplit(name,"_")[[1]][index-1],
+                               "_to_",
+                               strsplit(name,"_")[[1]][index+1])
+                      },indices,names,
+                      USE.NAMES = FALSE)
+  new_names <- ifelse(new_names=="NA_to_NA",names,new_names)
+  return(new_names)
+}
+density_extractor<-function(vals,kernel_v,bw_v,from_v) {
+  density_table<-density(vals,kernel = kernel_v, bw=bw_v,from = from_v)
+  new_ys<-approx(density_table$x,density_table$y,xout=vals)$y
+  return(new_ys)
+}
+prob_getter <- function(vals,min) {
+  kdr <- ks::kde(x=vals,xmin=min)
+  probs <- ks::pkde(fhat=kdr, q=vals)
+  return(probs)
+}
+```
+
+```{r load real mergers,cache=TRUE}
+old_regular <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/no_ao_cutler_only.csv")
+old_regular$Name <- "regular"
+old_regular$Type <- "Baseline"
+
+new_regular <-read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/no_ao_cutler_only_new_version.csv")
+new_regular$Name <- "new_regular"
+new_regular$Type <- "Baseline"
+
+caughtcot <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/caught_cot_no_ao_cutler_only.csv")
+caughtcot$Name <- "caughtcot"
+caughtcot$Type <- "ActualMerger"
+
+caughtcot_artificial <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/caught_cot_artificial_no_ao_cutler_only.csv")
+# caughtcot_artificial <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/caught_cot_artificial_no_ao_cutler_only_new_dict.csv")
+
+caughtcot_artificial$Name <- "caughtcot_artificial"
+caughtcot_artificial$Type <- "ActualMerger"
+
+pinpen <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/pin_pin_no_ao_cutler_only.csv")
+pinpen$Name <- "pinpen"
+pinpen$Type <- "ActualMerger"
+
+th_fronting <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/th_fronting_no_ao_cutler_only.csv")
+th_fronting$Name <- "th_fronting"
+th_fronting$Type <- "ActualMerger"
+
+th_stopping <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/th_stopping_no_ao_cutler_only.csv")
+th_stopping$Name <- "th_stopping"
+th_stopping$Type <- "ActualMerger"
+
+foolfull <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/fool_full_no_ao_cutler_only.csv")
+foolfull$Name <- "foolfull"
+foolfull$Type <- "ActualMerger"
+
+stillsteel <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/still_steel_no_ao_cutler_only.csv")
+stillsteel$Name <- "stillsteel"
+stillsteel$Type <- "ActualMerger"
+
+```
+
+
+```{r set functional load numbers}
+caughtcot_func_row  <- data.frame(MinPairs=c(7),
+    TotalChecked=c(-1),
+    Name=c("caughtcot"),
+    Type=c("ActualMerger"))
+caughtcot_artificial_func_row  <- data.frame(MinPairs=c(67),
+    TotalChecked=c(1445),
+    Name=c("caughtcot_artificial"),
+    Type=c("ActualMerger"))
+pinpen_func_row  <- data.frame(MinPairs=c(80),
+    TotalChecked=c(2052),
+    Name=c("pinpen"),
+    Type=c("ActualMerger"))
+th_fronting_func_row  <- data.frame(MinPairs=c(60),
+    TotalChecked=c(-1),
+    Name=c("th_fronting"),
+    Type=c("ActualMerger"))
+th_stopping_func_row  <- data.frame(MinPairs=c(144),
+    TotalChecked=c(-1),
+    Name=c("th_stopping"),
+    Type=c("ActualMerger"))
+foolfull_func_row  <- data.frame(MinPairs=c(7),
+    TotalChecked=c(193),
+    Name=c("foolfull"),
+    Type=c("ActualMerger"))
+stillsteel_func_row  <- data.frame(MinPairs=c(46),
+    TotalChecked=c(281),
+    Name=c("stillsteel"),
+    Type=c("ActualMerger"))
+```
+
+```{r load pin_pen_simple_func}
+pin_pen_simple_sub_func = data.frame(
+    MinPairs = c(132, 184, 63, 33, 9, 193, 41, 33, 53, 279, 30, 133, 221, 237, 117, 22, 167, 29, 203, 140),
+    TotalChecked = c(1445, 3391, 486, 1445, 979, 2415, 979, 299, 24559, 5038, 299, 2415, 24559, 6677, 24559, 24559, 3391, 6878, 5038, 2415),
+    Name = c("AO1_to_EY1", "OW1_to_EH1", "UH1_to_IH1", "AO1_to_OY1", "AW1_to_UH1", "UW1_to_EY1", "AW1_to_ER1", "OY1_to_AO1", "AH1_to_AW1", "EY1_to_IY1", "OY1_to_UW1", "UW1_to_AH1", "AH1_to_AA1", "EH1_to_EY1", "AH1_to_AO1", "AH1_to_OY1", "OW1_to_AA1", "AE1_to_OY1", "EY1_to_AA1", "UW1_to_EH1"),
+    Type = c("RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger"))
+#pin_pen_simple_sub_func <- rbind(pin_pen_simple_sub_func,caughtcot_func_row)
+pin_pen_simple_sub_func <- rbind(pin_pen_simple_sub_func,caughtcot_artificial_func_row)
+```
+
+
+```{r load pin_pen_simple_sub_sim_data,cache=TRUE}
+pin_pen_simple_sub_AO1_to_EY1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/pin_pen_both_ways_this_time_AO1_to_EY1_no_ao_cutler_only.csv")
+pin_pen_simple_sub_AO1_to_EY1$Name <- "pin_pen_simple_sub_AO1_to_EY1"
+pin_pen_simple_sub_OW1_to_EH1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/pin_pen_both_ways_this_time_OW1_to_EH1_no_ao_cutler_only.csv")
+pin_pen_simple_sub_OW1_to_EH1$Name <- "pin_pen_simple_sub_OW1_to_EH1"
+pin_pen_simple_sub_UH1_to_IH1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/pin_pen_both_ways_this_time_UH1_to_IH1_no_ao_cutler_only.csv")
+pin_pen_simple_sub_UH1_to_IH1$Name <- "pin_pen_simple_sub_UH1_to_IH1"
+pin_pen_simple_sub_AO1_to_OY1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/pin_pen_both_ways_this_time_AO1_to_OY1_no_ao_cutler_only.csv")
+pin_pen_simple_sub_AO1_to_OY1$Name <- "pin_pen_simple_sub_AO1_to_OY1"
+pin_pen_simple_sub_AW1_to_UH1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/pin_pen_both_ways_this_time_AW1_to_UH1_no_ao_cutler_only.csv")
+pin_pen_simple_sub_AW1_to_UH1$Name <- "pin_pen_simple_sub_AW1_to_UH1"
+pin_pen_simple_sub_UW1_to_EY1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/pin_pen_both_ways_this_time_UW1_to_EY1_no_ao_cutler_only.csv")
+pin_pen_simple_sub_UW1_to_EY1$Name <- "pin_pen_simple_sub_UW1_to_EY1"
+pin_pen_simple_sub_AW1_to_ER1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/pin_pen_both_ways_this_time_AW1_to_ER1_no_ao_cutler_only.csv")
+pin_pen_simple_sub_AW1_to_ER1$Name <- "pin_pen_simple_sub_AW1_to_ER1"
+pin_pen_simple_sub_OY1_to_AO1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/pin_pen_both_ways_this_time_OY1_to_AO1_no_ao_cutler_only.csv")
+pin_pen_simple_sub_OY1_to_AO1$Name <- "pin_pen_simple_sub_OY1_to_AO1"
+pin_pen_simple_sub_AH1_to_AW1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/pin_pen_both_ways_this_time_AH1_to_AW1_no_ao_cutler_only.csv")
+pin_pen_simple_sub_AH1_to_AW1$Name <- "pin_pen_simple_sub_AH1_to_AW1"
+pin_pen_simple_sub_EY1_to_IY1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/pin_pen_both_ways_this_time_EY1_to_IY1_no_ao_cutler_only.csv")
+pin_pen_simple_sub_EY1_to_IY1$Name <- "pin_pen_simple_sub_EY1_to_IY1"
+pin_pen_simple_sub_OY1_to_UW1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/pin_pen_both_ways_this_time_OY1_to_UW1_no_ao_cutler_only.csv")
+pin_pen_simple_sub_OY1_to_UW1$Name <- "pin_pen_simple_sub_OY1_to_UW1"
+pin_pen_simple_sub_UW1_to_AH1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/pin_pen_both_ways_this_time_UW1_to_AH1_no_ao_cutler_only.csv")
+pin_pen_simple_sub_UW1_to_AH1$Name <- "pin_pen_simple_sub_UW1_to_AH1"
+pin_pen_simple_sub_AH1_to_AA1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/pin_pen_both_ways_this_time_AH1_to_AA1_no_ao_cutler_only.csv")
+pin_pen_simple_sub_AH1_to_AA1$Name <- "pin_pen_simple_sub_AH1_to_AA1"
+pin_pen_simple_sub_EH1_to_EY1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/pin_pen_both_ways_this_time_EH1_to_EY1_no_ao_cutler_only.csv")
+pin_pen_simple_sub_EH1_to_EY1$Name <- "pin_pen_simple_sub_EH1_to_EY1"
+pin_pen_simple_sub_AH1_to_AO1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/pin_pen_both_ways_this_time_AH1_to_AO1_no_ao_cutler_only.csv")
+pin_pen_simple_sub_AH1_to_AO1$Name <- "pin_pen_simple_sub_AH1_to_AO1"
+pin_pen_simple_sub_AH1_to_OY1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/pin_pen_both_ways_this_time_AH1_to_OY1_no_ao_cutler_only.csv")
+pin_pen_simple_sub_AH1_to_OY1$Name <- "pin_pen_simple_sub_AH1_to_OY1"
+pin_pen_simple_sub_OW1_to_AA1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/pin_pen_both_ways_this_time_OW1_to_AA1_no_ao_cutler_only.csv")
+pin_pen_simple_sub_OW1_to_AA1$Name <- "pin_pen_simple_sub_OW1_to_AA1"
+pin_pen_simple_sub_AE1_to_OY1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/pin_pen_both_ways_this_time_AE1_to_OY1_no_ao_cutler_only.csv")
+pin_pen_simple_sub_AE1_to_OY1$Name <- "pin_pen_simple_sub_AE1_to_OY1"
+pin_pen_simple_sub_EY1_to_AA1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/pin_pen_both_ways_this_time_EY1_to_AA1_no_ao_cutler_only.csv")
+pin_pen_simple_sub_EY1_to_AA1$Name <- "pin_pen_simple_sub_EY1_to_AA1"
+pin_pen_simple_sub_UW1_to_EH1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/pin_pen_both_ways_this_time_UW1_to_EH1_no_ao_cutler_only.csv")
+pin_pen_simple_sub_UW1_to_EH1$Name <- "pin_pen_simple_sub_UW1_to_EH1"
+pin_pen_simple_sub_df <- rbind(pin_pen_simple_sub_AO1_to_EY1,pin_pen_simple_sub_OW1_to_EH1,pin_pen_simple_sub_UH1_to_IH1,pin_pen_simple_sub_AO1_to_OY1,pin_pen_simple_sub_AW1_to_UH1,pin_pen_simple_sub_UW1_to_EY1,pin_pen_simple_sub_AW1_to_ER1,pin_pen_simple_sub_OY1_to_AO1,pin_pen_simple_sub_AH1_to_AW1,pin_pen_simple_sub_EY1_to_IY1,pin_pen_simple_sub_OY1_to_UW1,pin_pen_simple_sub_UW1_to_AH1,pin_pen_simple_sub_AH1_to_AA1,pin_pen_simple_sub_EH1_to_EY1,pin_pen_simple_sub_AH1_to_AO1,pin_pen_simple_sub_AH1_to_OY1,pin_pen_simple_sub_OW1_to_AA1,pin_pen_simple_sub_AE1_to_OY1,pin_pen_simple_sub_EY1_to_AA1,pin_pen_simple_sub_UW1_to_EH1)
+rm(pin_pen_simple_sub_AO1_to_EY1,pin_pen_simple_sub_OW1_to_EH1,pin_pen_simple_sub_UH1_to_IH1,pin_pen_simple_sub_AO1_to_OY1,pin_pen_simple_sub_AW1_to_UH1,pin_pen_simple_sub_UW1_to_EY1,pin_pen_simple_sub_AW1_to_ER1,pin_pen_simple_sub_OY1_to_AO1,pin_pen_simple_sub_AH1_to_AW1,pin_pen_simple_sub_EY1_to_IY1,pin_pen_simple_sub_OY1_to_UW1,pin_pen_simple_sub_UW1_to_AH1,pin_pen_simple_sub_AH1_to_AA1,pin_pen_simple_sub_EH1_to_EY1,pin_pen_simple_sub_AH1_to_AO1,pin_pen_simple_sub_AH1_to_OY1,pin_pen_simple_sub_OW1_to_AA1,pin_pen_simple_sub_AE1_to_OY1,pin_pen_simple_sub_EY1_to_AA1,pin_pen_simple_sub_UW1_to_EH1)
+```
+
+```{r make pin_pen_simple_sub_sim_df}
+pin_pen_simple_sub_df %<>% dplyr::group_by(Name) %>%
+    tidyr::nest() %>%
+    dplyr::mutate(Type="RandomMerger",
+        UnWeightedMean = purrr::map(data,~mean(1-.$Confusability)) %>% purrr::simplify(),
+        WeightedMean = purrr::map(data,~1-weighted_average(.)) %>% purrr::simplify())
+```
+
+```{r load pin_pen_conditional_func}
+pin_pen_conditional_func = data.frame(
+    MinPairs = c(73, 6, 37, 57, 15, 7, 48, 47, 45, 63, 80, 45, 40, 47, 15, 43, 0, 4, 0, 35),
+    TotalChecked = c(2400, 9279, 267, 267, 267, 426, 585, 585, 585, 657, 7299, 7299, 7299, 729, 584, 584, 584, 83, 30, 521),
+    Name = c("AE1_to_AY1", "AH1_to_OY1", "AO1_to_AH1", "AO1_to_IH1", "AO1_to_OW1", "AW1_to_ER1", "AY1_to_EY1", "AY1_to_IY1", "AY1_to_OW1", "EY1_to_AE1", "IH1_to_EH1", "IH1_to_EY1", "IH1_to_UW1", "IY1_to_AY1", "OW1_to_AO1", "OW1_to_IY1", "OW1_to_UH1", "OY1_to_UW1", "UH1_to_IY1", "UW1_to_AY1"),
+    Type = c("RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger"))
+pin_pen_conditional_func <- rbind(pin_pen_conditional_func,pinpen_func_row)
+```
+
+
+```{r load pin_pen_conditional_sim_data,cache=TRUE}
+pin_pen_conditional_AE1_to_AY1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/pin_pen2_AE1_to_AY1_before_N|NG|M_no_ao_cutler_only.csv")
+pin_pen_conditional_AE1_to_AY1$Name <- "pin_pen_conditional_AE1_to_AY1"
+pin_pen_conditional_AH1_to_OY1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/pin_pen2_AH1_to_OY1_before_N|NG|M_no_ao_cutler_only.csv")
+pin_pen_conditional_AH1_to_OY1$Name <- "pin_pen_conditional_AH1_to_OY1"
+pin_pen_conditional_AO1_to_AH1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/pin_pen2_AO1_to_AH1_before_N|NG|M_no_ao_cutler_only.csv")
+pin_pen_conditional_AO1_to_AH1$Name <- "pin_pen_conditional_AO1_to_AH1"
+pin_pen_conditional_AO1_to_IH1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/pin_pen2_AO1_to_IH1_before_N|NG|M_no_ao_cutler_only.csv")
+pin_pen_conditional_AO1_to_IH1$Name <- "pin_pen_conditional_AO1_to_IH1"
+pin_pen_conditional_AO1_to_OW1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/pin_pen2_AO1_to_OW1_before_N|NG|M_no_ao_cutler_only.csv")
+pin_pen_conditional_AO1_to_OW1$Name <- "pin_pen_conditional_AO1_to_OW1"
+pin_pen_conditional_AW1_to_ER1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/pin_pen2_AW1_to_ER1_before_N|NG|M_no_ao_cutler_only.csv")
+pin_pen_conditional_AW1_to_ER1$Name <- "pin_pen_conditional_AW1_to_ER1"
+pin_pen_conditional_AY1_to_EY1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/pin_pen2_AY1_to_EY1_before_N|NG|M_no_ao_cutler_only.csv")
+pin_pen_conditional_AY1_to_EY1$Name <- "pin_pen_conditional_AY1_to_EY1"
+pin_pen_conditional_AY1_to_IY1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/pin_pen2_AY1_to_IY1_before_N|NG|M_no_ao_cutler_only.csv")
+pin_pen_conditional_AY1_to_IY1$Name <- "pin_pen_conditional_AY1_to_IY1"
+pin_pen_conditional_AY1_to_OW1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/pin_pen2_AY1_to_OW1_before_N|NG|M_no_ao_cutler_only.csv")
+pin_pen_conditional_AY1_to_OW1$Name <- "pin_pen_conditional_AY1_to_OW1"
+pin_pen_conditional_EY1_to_AE1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/pin_pen2_EY1_to_AE1_before_N|NG|M_no_ao_cutler_only.csv")
+pin_pen_conditional_EY1_to_AE1$Name <- "pin_pen_conditional_EY1_to_AE1"
+pin_pen_conditional_IH1_to_EH1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/pin_pen2_IH1_to_EH1_before_N|NG|M_no_ao_cutler_only.csv")
+pin_pen_conditional_IH1_to_EH1$Name <- "pin_pen_conditional_IH1_to_EH1"
+pin_pen_conditional_IH1_to_EY1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/pin_pen2_IH1_to_EY1_before_N|NG|M_no_ao_cutler_only.csv")
+pin_pen_conditional_IH1_to_EY1$Name <- "pin_pen_conditional_IH1_to_EY1"
+pin_pen_conditional_IH1_to_UW1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/pin_pen2_IH1_to_UW1_before_N|NG|M_no_ao_cutler_only.csv")
+pin_pen_conditional_IH1_to_UW1$Name <- "pin_pen_conditional_IH1_to_UW1"
+pin_pen_conditional_IY1_to_AY1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/pin_pen2_IY1_to_AY1_before_N|NG|M_no_ao_cutler_only.csv")
+pin_pen_conditional_IY1_to_AY1$Name <- "pin_pen_conditional_IY1_to_AY1"
+pin_pen_conditional_OW1_to_AO1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/pin_pen2_OW1_to_AO1_before_N|NG|M_no_ao_cutler_only.csv")
+pin_pen_conditional_OW1_to_AO1$Name <- "pin_pen_conditional_OW1_to_AO1"
+pin_pen_conditional_OW1_to_IY1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/pin_pen2_OW1_to_IY1_before_N|NG|M_no_ao_cutler_only.csv")
+pin_pen_conditional_OW1_to_IY1$Name <- "pin_pen_conditional_OW1_to_IY1"
+pin_pen_conditional_OW1_to_UH1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/pin_pen2_OW1_to_UH1_before_N|NG|M_no_ao_cutler_only.csv")
+pin_pen_conditional_OW1_to_UH1$Name <- "pin_pen_conditional_OW1_to_UH1"
+pin_pen_conditional_OY1_to_UW1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/pin_pen2_OY1_to_UW1_before_N|NG|M_no_ao_cutler_only.csv")
+pin_pen_conditional_OY1_to_UW1$Name <- "pin_pen_conditional_OY1_to_UW1"
+pin_pen_conditional_UH1_to_IY1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/pin_pen2_UH1_to_IY1_before_N|NG|M_no_ao_cutler_only.csv")
+pin_pen_conditional_UH1_to_IY1$Name <- "pin_pen_conditional_UH1_to_IY1"
+pin_pen_conditional_UW1_to_AY1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/pin_pen2_UW1_to_AY1_before_N|NG|M_no_ao_cutler_only.csv")
+pin_pen_conditional_UW1_to_AY1$Name <- "pin_pen_conditional_UW1_to_AY1"
+pin_pen_conditional_df <- rbind(pin_pen_conditional_AE1_to_AY1,pin_pen_conditional_AH1_to_OY1,pin_pen_conditional_AO1_to_AH1,pin_pen_conditional_AO1_to_IH1,pin_pen_conditional_AO1_to_OW1,pin_pen_conditional_AW1_to_ER1,pin_pen_conditional_AY1_to_EY1,pin_pen_conditional_AY1_to_IY1,pin_pen_conditional_AY1_to_OW1,pin_pen_conditional_EY1_to_AE1,pin_pen_conditional_IH1_to_EH1,pin_pen_conditional_IH1_to_EY1,pin_pen_conditional_IH1_to_UW1,pin_pen_conditional_IY1_to_AY1,pin_pen_conditional_OW1_to_AO1,pin_pen_conditional_OW1_to_IY1,pin_pen_conditional_OW1_to_UH1,pin_pen_conditional_OY1_to_UW1,pin_pen_conditional_UH1_to_IY1,pin_pen_conditional_UW1_to_AY1)
+rm(pin_pen_conditional_AE1_to_AY1,pin_pen_conditional_AH1_to_OY1,pin_pen_conditional_AO1_to_AH1,pin_pen_conditional_AO1_to_IH1,pin_pen_conditional_AO1_to_OW1,pin_pen_conditional_AW1_to_ER1,pin_pen_conditional_AY1_to_EY1,pin_pen_conditional_AY1_to_IY1,pin_pen_conditional_AY1_to_OW1,pin_pen_conditional_EY1_to_AE1,pin_pen_conditional_IH1_to_EH1,pin_pen_conditional_IH1_to_EY1,pin_pen_conditional_IH1_to_UW1,pin_pen_conditional_IY1_to_AY1,pin_pen_conditional_OW1_to_AO1,pin_pen_conditional_OW1_to_IY1,pin_pen_conditional_OW1_to_UH1,pin_pen_conditional_OY1_to_UW1,pin_pen_conditional_UH1_to_IY1,pin_pen_conditional_UW1_to_AY1)
+```
+
+```{r make pin_pen_conditional_sim_df}
+pin_pen_conditional_df %<>% dplyr::group_by(Name) %>%
+    tidyr::nest() %>%
+    dplyr::mutate(Type="RandomMerger",
+        UnWeightedMean = purrr::map(data,~mean(1-.$Confusability)) %>% purrr::simplify(),
+        WeightedMean = purrr::map(data,~1-weighted_average(.)) %>% purrr::simplify())
+```
+
+```{r load th_file_func}
+th_simple_sub_func_old = data.frame(
+    MinPairs = c(243, 145, 413, 548, 179, 480, 394, 49, 156, 85, 445, 358, 253, 163, 617, 418, 430, 365, 321, 136, 135, 693, 286, 350, 119, 628, 14, 376, 91, 157, 91, 376, 247, 89, 481, 954, 289, 311, 334, 394),
+    TotalChecked = c(-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1),
+    Name = c("CH_to_T", "TH_to_D", "F_to_K", "M_to_T", "CH_to_B", "D_to_N", "M_to_N", "DH_to_T", "JH_to_CH", "DH_to_ZH", "L_to_D", "R_to_D", "JH_to_Y", "CH_to_JH", "W_to_S", "NG_to_R", "R_to_T", "F_to_DH", "CH_to_R", "R_to_Z", "R_to_Y", "G_to_M", "S_to_V", "CH_to_TH", "DH_to_K", "N_to_D", "DH_to_Y", "K_to_G", "B_to_ZH", "T_to_ZH", "SH_to_DH", "DH_to_F", "N_to_NG", "K_to_DH", "D_to_JH", "D_to_NG", "HH_to_W", "F_to_W", "G_to_P", "D_to_SH"),
+    Type = c("RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger"))
+th_stopping_func <- th_simple_sub_func_old[1:nrow(th_simple_sub_func_old)/2,]
+th_stopping_func <- rbind(th_stopping_func,th_stopping_func_row)
+th_fronting_func <- th_simple_sub_func_old[(nrow(th_simple_sub_func_old)/2+1):nrow(th_simple_sub_func_old),]
+th_fronting_func <- rbind(th_fronting_func,th_fronting_func_row)
+```
+
+
+```{r load th_stopping_sim_data,cache=TRUE}
+th_stopping_CH_to_T <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/th_files_CH_to_T_and_N_to_Y_no_ao_cutler_only.csv")
+th_stopping_CH_to_T$Name <- "th_stopping_CH_to_T"
+th_stopping_TH_to_D <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/th_files_TH_to_D_and_Y_to_JH_no_ao_cutler_only.csv")
+th_stopping_TH_to_D$Name <- "th_stopping_TH_to_D"
+th_stopping_F_to_K <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/th_files_F_to_K_and_HH_to_TH_no_ao_cutler_only.csv")
+th_stopping_F_to_K$Name <- "th_stopping_F_to_K"
+th_stopping_M_to_T <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/th_files_M_to_T_and_NG_to_N_no_ao_cutler_only.csv")
+th_stopping_M_to_T$Name <- "th_stopping_M_to_T"
+th_stopping_CH_to_B <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/th_files_CH_to_B_and_TH_to_V_no_ao_cutler_only.csv")
+th_stopping_CH_to_B$Name <- "th_stopping_CH_to_B"
+th_stopping_D_to_N <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/th_files_D_to_N_and_TH_to_Z_no_ao_cutler_only.csv")
+th_stopping_D_to_N$Name <- "th_stopping_D_to_N"
+th_stopping_M_to_N <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/th_files_M_to_N_and_TH_to_NG_no_ao_cutler_only.csv")
+th_stopping_M_to_N$Name <- "th_stopping_M_to_N"
+th_stopping_DH_to_T <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/th_files_DH_to_T_and_Y_to_ZH_no_ao_cutler_only.csv")
+th_stopping_DH_to_T$Name <- "th_stopping_DH_to_T"
+th_stopping_JH_to_CH <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/th_files_JH_to_CH_and_NG_to_T_no_ao_cutler_only.csv")
+th_stopping_JH_to_CH$Name <- "th_stopping_JH_to_CH"
+th_stopping_DH_to_ZH <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/th_files_DH_to_ZH_and_NG_to_T_no_ao_cutler_only.csv")
+th_stopping_DH_to_ZH$Name <- "th_stopping_DH_to_ZH"
+th_stopping_L_to_D <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/th_files_L_to_D_and_TH_to_ZH_no_ao_cutler_only.csv")
+th_stopping_L_to_D$Name <- "th_stopping_L_to_D"
+th_stopping_R_to_D <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/th_files_R_to_D_and_ZH_to_B_no_ao_cutler_only.csv")
+th_stopping_R_to_D$Name <- "th_stopping_R_to_D"
+th_stopping_JH_to_Y <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/th_files_JH_to_Y_and_T_to_W_no_ao_cutler_only.csv")
+th_stopping_JH_to_Y$Name <- "th_stopping_JH_to_Y"
+th_stopping_CH_to_JH <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/th_files_CH_to_JH_and_V_to_Z_no_ao_cutler_only.csv")
+th_stopping_CH_to_JH$Name <- "th_stopping_CH_to_JH"
+th_stopping_W_to_S <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/th_files_W_to_S_and_N_to_D_no_ao_cutler_only.csv")
+th_stopping_W_to_S$Name <- "th_stopping_W_to_S"
+th_stopping_NG_to_R <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/th_files_NG_to_R_and_P_to_D_no_ao_cutler_only.csv")
+th_stopping_NG_to_R$Name <- "th_stopping_NG_to_R"
+th_stopping_R_to_T <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/th_files_R_to_T_and_TH_to_L_no_ao_cutler_only.csv")
+th_stopping_R_to_T$Name <- "th_stopping_R_to_T"
+th_stopping_F_to_DH <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/th_files_F_to_DH_and_K_to_G_no_ao_cutler_only.csv")
+th_stopping_F_to_DH$Name <- "th_stopping_F_to_DH"
+th_stopping_CH_to_R <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/th_files_CH_to_R_and_D_to_SH_no_ao_cutler_only.csv")
+th_stopping_CH_to_R$Name <- "th_stopping_CH_to_R"
+th_stopping_R_to_Z <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/th_files_R_to_Z_and_S_to_Y_no_ao_cutler_only.csv")
+th_stopping_R_to_Z$Name <- "th_stopping_R_to_Z"
+th_stopping_df <- rbind(th_stopping_CH_to_T,th_stopping_TH_to_D,th_stopping_F_to_K,th_stopping_M_to_T,th_stopping_CH_to_B,th_stopping_D_to_N,th_stopping_M_to_N,th_stopping_DH_to_T,th_stopping_JH_to_CH,th_stopping_DH_to_ZH,th_stopping_L_to_D,th_stopping_R_to_D,th_stopping_JH_to_Y,th_stopping_CH_to_JH,th_stopping_W_to_S,th_stopping_NG_to_R,th_stopping_R_to_T,th_stopping_F_to_DH,th_stopping_CH_to_R,th_stopping_R_to_Z)
+rm(th_stopping_CH_to_T,th_stopping_TH_to_D,th_stopping_F_to_K,th_stopping_M_to_T,th_stopping_CH_to_B,th_stopping_D_to_N,th_stopping_M_to_N,th_stopping_DH_to_T,th_stopping_JH_to_CH,th_stopping_DH_to_ZH,th_stopping_L_to_D,th_stopping_R_to_D,th_stopping_JH_to_Y,th_stopping_CH_to_JH,th_stopping_W_to_S,th_stopping_NG_to_R,th_stopping_R_to_T,th_stopping_F_to_DH,th_stopping_CH_to_R,th_stopping_R_to_Z)
+```
+
+```{r make th_stopping_sim_df}
+th_stopping_df %<>% dplyr::group_by(Name) %>%
+    tidyr::nest() %>%
+    dplyr::mutate(Type="RandomMerger",
+        UnWeightedMean = purrr::map(data,~mean(1-.$Confusability)) %>% purrr::simplify(),
+        WeightedMean = purrr::map(data,~1-weighted_average(.)) %>% purrr::simplify())
+```
+
+```{r load th_fronting_sim_data,cache=TRUE}
+th_fronting_R_to_Y <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/th_files_R_to_Y_and_T_to_NG_no_ao_cutler_only.csv")
+th_fronting_R_to_Y$Name <- "th_fronting_R_to_Y"
+th_fronting_G_to_M <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/th_files_G_to_M_and_K_to_N_no_ao_cutler_only.csv")
+th_fronting_G_to_M$Name <- "th_fronting_G_to_M"
+th_fronting_S_to_V <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/th_files_S_to_V_and_Z_to_P_no_ao_cutler_only.csv")
+th_fronting_S_to_V$Name <- "th_fronting_S_to_V"
+th_fronting_CH_to_TH <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/th_files_CH_to_TH_and_R_to_N_no_ao_cutler_only.csv")
+th_fronting_CH_to_TH$Name <- "th_fronting_CH_to_TH"
+th_fronting_DH_to_K <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/th_files_DH_to_K_and_TH_to_P_no_ao_cutler_only.csv")
+th_fronting_DH_to_K$Name <- "th_fronting_DH_to_K"
+th_fronting_N_to_D <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/th_files_N_to_D_and_R_to_W_no_ao_cutler_only.csv")
+th_fronting_N_to_D$Name <- "th_fronting_N_to_D"
+th_fronting_DH_to_Y <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/th_files_DH_to_Y_and_ZH_to_K_no_ao_cutler_only.csv")
+th_fronting_DH_to_Y$Name <- "th_fronting_DH_to_Y"
+th_fronting_K_to_G <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/th_files_K_to_G_and_TH_to_JH_no_ao_cutler_only.csv")
+th_fronting_K_to_G$Name <- "th_fronting_K_to_G"
+th_fronting_B_to_ZH <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/th_files_B_to_ZH_and_JH_to_HH_no_ao_cutler_only.csv")
+th_fronting_B_to_ZH$Name <- "th_fronting_B_to_ZH"
+th_fronting_T_to_ZH <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/th_files_T_to_ZH_and_W_to_D_no_ao_cutler_only.csv")
+th_fronting_T_to_ZH$Name <- "th_fronting_T_to_ZH"
+th_fronting_SH_to_DH <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/th_files_SH_to_DH_and_W_to_CH_no_ao_cutler_only.csv")
+th_fronting_SH_to_DH$Name <- "th_fronting_SH_to_DH"
+th_fronting_DH_to_F <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/th_files_DH_to_F_and_P_to_D_no_ao_cutler_only.csv")
+th_fronting_DH_to_F$Name <- "th_fronting_DH_to_F"
+th_fronting_N_to_NG <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/th_files_N_to_NG_and_S_to_V_no_ao_cutler_only.csv")
+th_fronting_N_to_NG$Name <- "th_fronting_N_to_NG"
+th_fronting_K_to_DH <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/th_files_K_to_DH_and_Y_to_HH_no_ao_cutler_only.csv")
+th_fronting_K_to_DH$Name <- "th_fronting_K_to_DH"
+th_fronting_D_to_JH <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/th_files_D_to_JH_and_F_to_T_no_ao_cutler_only.csv")
+th_fronting_D_to_JH$Name <- "th_fronting_D_to_JH"
+th_fronting_D_to_NG <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/th_files_D_to_NG_and_S_to_L_no_ao_cutler_only.csv")
+th_fronting_D_to_NG$Name <- "th_fronting_D_to_NG"
+th_fronting_HH_to_W <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/th_files_HH_to_W_and_NG_to_N_no_ao_cutler_only.csv")
+th_fronting_HH_to_W$Name <- "th_fronting_HH_to_W"
+th_fronting_F_to_W <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/th_files_F_to_W_and_HH_to_G_no_ao_cutler_only.csv")
+th_fronting_F_to_W$Name <- "th_fronting_F_to_W"
+th_fronting_G_to_P <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/th_files_G_to_P_and_R_to_V_no_ao_cutler_only.csv")
+th_fronting_G_to_P$Name <- "th_fronting_G_to_P"
+th_fronting_D_to_SH <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/th_files_D_to_SH_and_T_to_HH_no_ao_cutler_only.csv")
+th_fronting_D_to_SH$Name <- "th_fronting_D_to_SH"
+th_fronting_df <- rbind(th_fronting_R_to_Y,th_fronting_G_to_M,th_fronting_S_to_V,th_fronting_CH_to_TH,th_fronting_DH_to_K,th_fronting_N_to_D,th_fronting_DH_to_Y,th_fronting_K_to_G,th_fronting_B_to_ZH,th_fronting_T_to_ZH,th_fronting_SH_to_DH,th_fronting_DH_to_F,th_fronting_N_to_NG,th_fronting_K_to_DH,th_fronting_D_to_JH,th_fronting_D_to_NG,th_fronting_HH_to_W,th_fronting_F_to_W,th_fronting_G_to_P,th_fronting_D_to_SH)
+rm(th_fronting_R_to_Y,th_fronting_G_to_M,th_fronting_S_to_V,th_fronting_CH_to_TH,th_fronting_DH_to_K,th_fronting_N_to_D,th_fronting_DH_to_Y,th_fronting_K_to_G,th_fronting_B_to_ZH,th_fronting_T_to_ZH,th_fronting_SH_to_DH,th_fronting_DH_to_F,th_fronting_N_to_NG,th_fronting_K_to_DH,th_fronting_D_to_JH,th_fronting_D_to_NG,th_fronting_HH_to_W,th_fronting_F_to_W,th_fronting_G_to_P,th_fronting_D_to_SH)
+```
+
+```{r make th_fronting_sim_df}
+th_fronting_df %<>% dplyr::group_by(Name) %>%
+    tidyr::nest() %>%
+    dplyr::mutate(Type="RandomMerger",
+        UnWeightedMean = purrr::map(data,~mean(1-.$Confusability)) %>% purrr::simplify(),
+        WeightedMean = purrr::map(data,~1-weighted_average(.)) %>% purrr::simplify())
+```
+
+```{r load fool_full_func}
+fool_full_conditional_func = data.frame(
+    MinPairs = c(38, 7, 14, 10, 6, 16, 23, 11, 27, 12, 10, 49, 9, 20, 41, 4, 8, 46, 3, 24),
+    TotalChecked = c(223, 97, 4660, 29, 196, 61, 566, 363, 196, 4660, 363, 733, 446, 363, 733, 4660, 29, 968, 566, 733),
+    Name = c("AY1_swap_EH1", "UH1_swap_UW1", "AH1_swap_AY1", "AW1_swap_OW1", "ER1_swap_UH1", "OY1_swap_UW1", "AE1_swap_EH1", "AO1_swap_AW1", "ER1_swap_IH1", "AH1_swap_ER1", "AO1_swap_UH1", "EH1_swap_EY1", "OW1_swap_UH1", "AO1_swap_UW1", "EH1_swap_IY1", "AH1_swap_AW1", "AW1_swap_OY1", "IH1_swap_IY1", "AE1_swap_AW1", "EH1_swap_ER1"),
+    Type = c("RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger"))
+fool_full_conditional_func <- rbind(fool_full_conditional_func,foolfull_func_row)
+```
+
+
+```{r load fool_full_sim_data,cache=TRUE}
+fool_full_AY1_swap_EH1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/fool_full_AY1_swap_EH1_no_ao_cutler_only.csv")
+fool_full_AY1_swap_EH1$Name <- "fool_full_AY1_swap_EH1"
+fool_full_UH1_swap_UW1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/fool_full_UH1_swap_UW1_no_ao_cutler_only.csv")
+fool_full_UH1_swap_UW1$Name <- "fool_full_UH1_swap_UW1"
+fool_full_AH1_swap_AY1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/fool_full_AH1_swap_AY1_no_ao_cutler_only.csv")
+fool_full_AH1_swap_AY1$Name <- "fool_full_AH1_swap_AY1"
+fool_full_AW1_swap_OW1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/fool_full_AW1_swap_OW1_no_ao_cutler_only.csv")
+fool_full_AW1_swap_OW1$Name <- "fool_full_AW1_swap_OW1"
+fool_full_ER1_swap_UH1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/fool_full_ER1_swap_UH1_no_ao_cutler_only.csv")
+fool_full_ER1_swap_UH1$Name <- "fool_full_ER1_swap_UH1"
+fool_full_OY1_swap_UW1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/fool_full_OY1_swap_UW1_no_ao_cutler_only.csv")
+fool_full_OY1_swap_UW1$Name <- "fool_full_OY1_swap_UW1"
+fool_full_AE1_swap_EH1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/fool_full_AE1_swap_EH1_no_ao_cutler_only.csv")
+fool_full_AE1_swap_EH1$Name <- "fool_full_AE1_swap_EH1"
+fool_full_AO1_swap_AW1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/fool_full_AO1_swap_AW1_no_ao_cutler_only.csv")
+fool_full_AO1_swap_AW1$Name <- "fool_full_AO1_swap_AW1"
+fool_full_ER1_swap_IH1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/fool_full_ER1_swap_IH1_no_ao_cutler_only.csv")
+fool_full_ER1_swap_IH1$Name <- "fool_full_ER1_swap_IH1"
+fool_full_AH1_swap_ER1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/fool_full_AH1_swap_ER1_no_ao_cutler_only.csv")
+fool_full_AH1_swap_ER1$Name <- "fool_full_AH1_swap_ER1"
+fool_full_AO1_swap_UH1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/fool_full_AO1_swap_UH1_no_ao_cutler_only.csv")
+fool_full_AO1_swap_UH1$Name <- "fool_full_AO1_swap_UH1"
+fool_full_EH1_swap_EY1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/fool_full_EH1_swap_EY1_no_ao_cutler_only.csv")
+fool_full_EH1_swap_EY1$Name <- "fool_full_EH1_swap_EY1"
+fool_full_OW1_swap_UH1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/fool_full_OW1_swap_UH1_no_ao_cutler_only.csv")
+fool_full_OW1_swap_UH1$Name <- "fool_full_OW1_swap_UH1"
+fool_full_AO1_swap_UW1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/fool_full_AO1_swap_UW1_no_ao_cutler_only.csv")
+fool_full_AO1_swap_UW1$Name <- "fool_full_AO1_swap_UW1"
+fool_full_EH1_swap_IY1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/fool_full_EH1_swap_IY1_no_ao_cutler_only.csv")
+fool_full_EH1_swap_IY1$Name <- "fool_full_EH1_swap_IY1"
+fool_full_AH1_swap_AW1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/fool_full_AH1_swap_AW1_no_ao_cutler_only.csv")
+fool_full_AH1_swap_AW1$Name <- "fool_full_AH1_swap_AW1"
+fool_full_AW1_swap_OY1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/fool_full_AW1_swap_OY1_no_ao_cutler_only.csv")
+fool_full_AW1_swap_OY1$Name <- "fool_full_AW1_swap_OY1"
+fool_full_IH1_swap_IY1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/fool_full_IH1_swap_IY1_no_ao_cutler_only.csv")
+fool_full_IH1_swap_IY1$Name <- "fool_full_IH1_swap_IY1"
+fool_full_AE1_swap_AW1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/fool_full_AE1_swap_AW1_no_ao_cutler_only.csv")
+fool_full_AE1_swap_AW1$Name <- "fool_full_AE1_swap_AW1"
+fool_full_EH1_swap_ER1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/fool_full_EH1_swap_ER1_no_ao_cutler_only.csv")
+fool_full_EH1_swap_ER1$Name <- "fool_full_EH1_swap_ER1"
+fool_full_df <- rbind(fool_full_AY1_swap_EH1,fool_full_UH1_swap_UW1,fool_full_AH1_swap_AY1,fool_full_AW1_swap_OW1,fool_full_ER1_swap_UH1,fool_full_OY1_swap_UW1,fool_full_AE1_swap_EH1,fool_full_AO1_swap_AW1,fool_full_ER1_swap_IH1,fool_full_AH1_swap_ER1,fool_full_AO1_swap_UH1,fool_full_EH1_swap_EY1,fool_full_OW1_swap_UH1,fool_full_AO1_swap_UW1,fool_full_EH1_swap_IY1,fool_full_AH1_swap_AW1,fool_full_AW1_swap_OY1,fool_full_IH1_swap_IY1,fool_full_AE1_swap_AW1,fool_full_EH1_swap_ER1)
+rm(fool_full_AY1_swap_EH1,fool_full_UH1_swap_UW1,fool_full_AH1_swap_AY1,fool_full_AW1_swap_OW1,fool_full_ER1_swap_UH1,fool_full_OY1_swap_UW1,fool_full_AE1_swap_EH1,fool_full_AO1_swap_AW1,fool_full_ER1_swap_IH1,fool_full_AH1_swap_ER1,fool_full_AO1_swap_UH1,fool_full_EH1_swap_EY1,fool_full_OW1_swap_UH1,fool_full_AO1_swap_UW1,fool_full_EH1_swap_IY1,fool_full_AH1_swap_AW1,fool_full_AW1_swap_OY1,fool_full_IH1_swap_IY1,fool_full_AE1_swap_AW1,fool_full_EH1_swap_ER1)
+```
+
+```{r make fool_full_sim_df}
+fool_full_df %<>% dplyr::group_by(Name) %>%
+    tidyr::nest() %>%
+    dplyr::mutate(Type="RandomMerger",
+        UnWeightedMean = purrr::map(data,~mean(1-.$Confusability)) %>% purrr::simplify(),
+        WeightedMean = purrr::map(data,~1-weighted_average(.)) %>% purrr::simplify())
+```
+
+
+```{r load still_steel_func}
+still_steel_conditional_func = data.frame(
+    MinPairs = c(3, 7, 23, 8, 38, 20, 4, 27, 46, 24, 15, 21, 10, 22, 14, 4, 16, 34, 10, 57),
+    TotalChecked = c(29, 97, 446, 29, 223, 363, 4660, 196, 968, 733, 4660, 566, 29, 505, 4660, 4660, 61, 223, 363, 307),
+    Name = c("AW1_swap_UH1", "UH1_swap_UW1", "OW1_swap_OY1", "AW1_swap_OY1", "AY1_swap_EH1", "AO1_swap_UW1", "AH1_swap_AW1", "ER1_swap_IH1", "IH1_swap_IY1", "EH1_swap_ER1", "AH1_swap_AO1", "AE1_swap_EY1", "AW1_swap_OW1", "AA1_swap_AE1", "AH1_swap_AY1", "AH1_swap_OY1", "OY1_swap_UW1", "AY1_swap_IY1", "AO1_swap_UH1", "EY1_swap_IH1"),
+    Type = c("RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger"))
+still_steel_conditional_func <- rbind(still_steel_conditional_func,stillsteel_func_row)
+```
+
+```{r load still_steel_sim_data,cache=TRUE}
+still_steel_AW1_swap_UH1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/still_steel_AW1_swap_UH1_no_ao_cutler_only.csv")
+still_steel_AW1_swap_UH1$Name <- "still_steel_AW1_swap_UH1"
+still_steel_UH1_swap_UW1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/still_steel_UH1_swap_UW1_no_ao_cutler_only.csv")
+still_steel_UH1_swap_UW1$Name <- "still_steel_UH1_swap_UW1"
+still_steel_OW1_swap_OY1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/still_steel_OW1_swap_OY1_no_ao_cutler_only.csv")
+still_steel_OW1_swap_OY1$Name <- "still_steel_OW1_swap_OY1"
+still_steel_AW1_swap_OY1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/still_steel_AW1_swap_OY1_no_ao_cutler_only.csv")
+still_steel_AW1_swap_OY1$Name <- "still_steel_AW1_swap_OY1"
+still_steel_AY1_swap_EH1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/still_steel_AY1_swap_EH1_no_ao_cutler_only.csv")
+still_steel_AY1_swap_EH1$Name <- "still_steel_AY1_swap_EH1"
+still_steel_AO1_swap_UW1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/still_steel_AO1_swap_UW1_no_ao_cutler_only.csv")
+still_steel_AO1_swap_UW1$Name <- "still_steel_AO1_swap_UW1"
+still_steel_AH1_swap_AW1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/still_steel_AH1_swap_AW1_no_ao_cutler_only.csv")
+still_steel_AH1_swap_AW1$Name <- "still_steel_AH1_swap_AW1"
+still_steel_ER1_swap_IH1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/still_steel_ER1_swap_IH1_no_ao_cutler_only.csv")
+still_steel_ER1_swap_IH1$Name <- "still_steel_ER1_swap_IH1"
+still_steel_IH1_swap_IY1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/still_steel_IH1_swap_IY1_no_ao_cutler_only.csv")
+still_steel_IH1_swap_IY1$Name <- "still_steel_IH1_swap_IY1"
+still_steel_EH1_swap_ER1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/still_steel_EH1_swap_ER1_no_ao_cutler_only.csv")
+still_steel_EH1_swap_ER1$Name <- "still_steel_EH1_swap_ER1"
+still_steel_AH1_swap_AO1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/still_steel_AH1_swap_AO1_no_ao_cutler_only.csv")
+still_steel_AH1_swap_AO1$Name <- "still_steel_AH1_swap_AO1"
+still_steel_AE1_swap_EY1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/still_steel_AE1_swap_EY1_no_ao_cutler_only.csv")
+still_steel_AE1_swap_EY1$Name <- "still_steel_AE1_swap_EY1"
+still_steel_AW1_swap_OW1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/still_steel_AW1_swap_OW1_no_ao_cutler_only.csv")
+still_steel_AW1_swap_OW1$Name <- "still_steel_AW1_swap_OW1"
+still_steel_AA1_swap_AE1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/still_steel_AA1_swap_AE1_no_ao_cutler_only.csv")
+still_steel_AA1_swap_AE1$Name <- "still_steel_AA1_swap_AE1"
+still_steel_AH1_swap_AY1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/still_steel_AH1_swap_AY1_no_ao_cutler_only.csv")
+still_steel_AH1_swap_AY1$Name <- "still_steel_AH1_swap_AY1"
+still_steel_AH1_swap_OY1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/still_steel_AH1_swap_OY1_no_ao_cutler_only.csv")
+still_steel_AH1_swap_OY1$Name <- "still_steel_AH1_swap_OY1"
+still_steel_OY1_swap_UW1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/still_steel_OY1_swap_UW1_no_ao_cutler_only.csv")
+still_steel_OY1_swap_UW1$Name <- "still_steel_OY1_swap_UW1"
+still_steel_AY1_swap_IY1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/still_steel_AY1_swap_IY1_no_ao_cutler_only.csv")
+still_steel_AY1_swap_IY1$Name <- "still_steel_AY1_swap_IY1"
+still_steel_AO1_swap_UH1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/still_steel_AO1_swap_UH1_no_ao_cutler_only.csv")
+still_steel_AO1_swap_UH1$Name <- "still_steel_AO1_swap_UH1"
+still_steel_EY1_swap_IH1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/still_steel_EY1_swap_IH1_no_ao_cutler_only.csv")
+still_steel_EY1_swap_IH1$Name <- "still_steel_EY1_swap_IH1"
+still_steel_df <- rbind(still_steel_AW1_swap_UH1,still_steel_UH1_swap_UW1,still_steel_OW1_swap_OY1,still_steel_AW1_swap_OY1,still_steel_AY1_swap_EH1,still_steel_AO1_swap_UW1,still_steel_AH1_swap_AW1,still_steel_ER1_swap_IH1,still_steel_IH1_swap_IY1,still_steel_EH1_swap_ER1,still_steel_AH1_swap_AO1,still_steel_AE1_swap_EY1,still_steel_AW1_swap_OW1,still_steel_AA1_swap_AE1,still_steel_AH1_swap_AY1,still_steel_AH1_swap_OY1,still_steel_OY1_swap_UW1,still_steel_AY1_swap_IY1,still_steel_AO1_swap_UH1,still_steel_EY1_swap_IH1)
+rm(still_steel_AW1_swap_UH1,still_steel_UH1_swap_UW1,still_steel_OW1_swap_OY1,still_steel_AW1_swap_OY1,still_steel_AY1_swap_EH1,still_steel_AO1_swap_UW1,still_steel_AH1_swap_AW1,still_steel_ER1_swap_IH1,still_steel_IH1_swap_IY1,still_steel_EH1_swap_ER1,still_steel_AH1_swap_AO1,still_steel_AE1_swap_EY1,still_steel_AW1_swap_OW1,still_steel_AA1_swap_AE1,still_steel_AH1_swap_AY1,still_steel_AH1_swap_OY1,still_steel_OY1_swap_UW1,still_steel_AY1_swap_IY1,still_steel_AO1_swap_UH1,still_steel_EY1_swap_IH1)
+```
+
+```{r make still_steel_sim_df}
+still_steel_df %<>% dplyr::group_by(Name) %>%
+    tidyr::nest() %>%
+    dplyr::mutate(Type="RandomMerger",
+        UnWeightedMean = purrr::map(data,~mean(1-.$Confusability)) %>% purrr::simplify(),
+        WeightedMean = purrr::map(data,~1-weighted_average(.)) %>% purrr::simplify())
+```
+
+
+
+```{r load still_steel_func_new}
+still_steel_conditional_func = data.frame(
+    MinPairs = c(3, 7, 23, 8, 38, 20, 4, 27, 46, 24, 15, 21, 10, 22, 14, 4, 16, 34, 10, 57),
+    TotalChecked = c(29, 97, 446, 29, 223, 363, 4660, 196, 968, 733, 4660, 566, 29, 505, 4660, 4660, 61, 223, 363, 307),
+    Name = c("AW1_swap_UH1", "UH1_swap_UW1", "OW1_swap_OY1", "AW1_swap_OY1", "AY1_swap_EH1", "AO1_swap_UW1", "AH1_swap_AW1", "ER1_swap_IH1", "IH1_swap_IY1", "EH1_swap_ER1", "AH1_swap_AO1", "AE1_swap_EY1", "AW1_swap_OW1", "AA1_swap_AE1", "AH1_swap_AY1", "AH1_swap_OY1", "OY1_swap_UW1", "AY1_swap_IY1", "AO1_swap_UH1", "EY1_swap_IH1"),
+    Type = c("RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger"))
+still_steel_conditional_func <- rbind(still_steel_conditional_func,stillsteel_func_row)
+```
+
+```{r load still_steel_sim_data_new,cache=TRUE}
+still_steel_AW1_swap_UH1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/still_steel_AW1_swap_UH1_no_ao_cutler_only.csv")
+still_steel_AW1_swap_UH1$Name <- "still_steel_AW1_swap_UH1"
+still_steel_UH1_swap_UW1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/still_steel_UH1_swap_UW1_no_ao_cutler_only.csv")
+still_steel_UH1_swap_UW1$Name <- "still_steel_UH1_swap_UW1"
+still_steel_OW1_swap_OY1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/still_steel_OW1_swap_OY1_no_ao_cutler_only.csv")
+still_steel_OW1_swap_OY1$Name <- "still_steel_OW1_swap_OY1"
+still_steel_AW1_swap_OY1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/still_steel_AW1_swap_OY1_no_ao_cutler_only.csv")
+still_steel_AW1_swap_OY1$Name <- "still_steel_AW1_swap_OY1"
+still_steel_AY1_swap_EH1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/still_steel_AY1_swap_EH1_no_ao_cutler_only.csv")
+still_steel_AY1_swap_EH1$Name <- "still_steel_AY1_swap_EH1"
+still_steel_AO1_swap_UW1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/still_steel_AO1_swap_UW1_no_ao_cutler_only.csv")
+still_steel_AO1_swap_UW1$Name <- "still_steel_AO1_swap_UW1"
+still_steel_AH1_swap_AW1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/still_steel_AH1_swap_AW1_no_ao_cutler_only.csv")
+still_steel_AH1_swap_AW1$Name <- "still_steel_AH1_swap_AW1"
+still_steel_ER1_swap_IH1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/still_steel_ER1_swap_IH1_no_ao_cutler_only.csv")
+still_steel_ER1_swap_IH1$Name <- "still_steel_ER1_swap_IH1"
+still_steel_IH1_swap_IY1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/still_steel_IH1_swap_IY1_no_ao_cutler_only.csv")
+still_steel_IH1_swap_IY1$Name <- "still_steel_IH1_swap_IY1"
+still_steel_EH1_swap_ER1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/still_steel_EH1_swap_ER1_no_ao_cutler_only.csv")
+still_steel_EH1_swap_ER1$Name <- "still_steel_EH1_swap_ER1"
+still_steel_AH1_swap_AO1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/still_steel_AH1_swap_AO1_no_ao_cutler_only.csv")
+still_steel_AH1_swap_AO1$Name <- "still_steel_AH1_swap_AO1"
+still_steel_AE1_swap_EY1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/still_steel_AE1_swap_EY1_no_ao_cutler_only.csv")
+still_steel_AE1_swap_EY1$Name <- "still_steel_AE1_swap_EY1"
+still_steel_AW1_swap_OW1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/still_steel_AW1_swap_OW1_no_ao_cutler_only.csv")
+still_steel_AW1_swap_OW1$Name <- "still_steel_AW1_swap_OW1"
+still_steel_AA1_swap_AE1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/still_steel_AA1_swap_AE1_no_ao_cutler_only.csv")
+still_steel_AA1_swap_AE1$Name <- "still_steel_AA1_swap_AE1"
+still_steel_AH1_swap_AY1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/still_steel_AH1_swap_AY1_no_ao_cutler_only.csv")
+still_steel_AH1_swap_AY1$Name <- "still_steel_AH1_swap_AY1"
+still_steel_AH1_swap_OY1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/still_steel_AH1_swap_OY1_no_ao_cutler_only.csv")
+still_steel_AH1_swap_OY1$Name <- "still_steel_AH1_swap_OY1"
+still_steel_OY1_swap_UW1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/still_steel_OY1_swap_UW1_no_ao_cutler_only.csv")
+still_steel_OY1_swap_UW1$Name <- "still_steel_OY1_swap_UW1"
+still_steel_AY1_swap_IY1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/still_steel_AY1_swap_IY1_no_ao_cutler_only.csv")
+still_steel_AY1_swap_IY1$Name <- "still_steel_AY1_swap_IY1"
+still_steel_AO1_swap_UH1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/still_steel_AO1_swap_UH1_no_ao_cutler_only.csv")
+still_steel_AO1_swap_UH1$Name <- "still_steel_AO1_swap_UH1"
+still_steel_EY1_swap_IH1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/still_steel_EY1_swap_IH1_no_ao_cutler_only.csv")
+still_steel_EY1_swap_IH1$Name <- "still_steel_EY1_swap_IH1"
+still_steel_df <- rbind(still_steel_AW1_swap_UH1,still_steel_UH1_swap_UW1,still_steel_OW1_swap_OY1,still_steel_AW1_swap_OY1,still_steel_AY1_swap_EH1,still_steel_AO1_swap_UW1,still_steel_AH1_swap_AW1,still_steel_ER1_swap_IH1,still_steel_IH1_swap_IY1,still_steel_EH1_swap_ER1,still_steel_AH1_swap_AO1,still_steel_AE1_swap_EY1,still_steel_AW1_swap_OW1,still_steel_AA1_swap_AE1,still_steel_AH1_swap_AY1,still_steel_AH1_swap_OY1,still_steel_OY1_swap_UW1,still_steel_AY1_swap_IY1,still_steel_AO1_swap_UH1,still_steel_EY1_swap_IH1)
+rm(still_steel_AW1_swap_UH1,still_steel_UH1_swap_UW1,still_steel_OW1_swap_OY1,still_steel_AW1_swap_OY1,still_steel_AY1_swap_EH1,still_steel_AO1_swap_UW1,still_steel_AH1_swap_AW1,still_steel_ER1_swap_IH1,still_steel_IH1_swap_IY1,still_steel_EH1_swap_ER1,still_steel_AH1_swap_AO1,still_steel_AE1_swap_EY1,still_steel_AW1_swap_OW1,still_steel_AA1_swap_AE1,still_steel_AH1_swap_AY1,still_steel_AH1_swap_OY1,still_steel_OY1_swap_UW1,still_steel_AY1_swap_IY1,still_steel_AO1_swap_UH1,still_steel_EY1_swap_IH1)
+```
+
+```{r make still_steel_sim_df_new}
+still_steel_df %<>% dplyr::group_by(Name) %>%
+    tidyr::nest() %>%
+    dplyr::mutate(Type="RandomMerger",
+        UnWeightedMean = purrr::map(data,~mean(1-.$Confusability)) %>% purrr::simplify(),
+        WeightedMean = purrr::map(data,~1-weighted_average(.)) %>% purrr::simplify())
+```
+
+
+
+
+
+
+```{r load_slow_shift_consonantsF_to_NG_data,cache=TRUE}
+consonantsF_to_NG100=read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/slow_shift_consonantsF_to_NG_True_100_percent2.csv")
+consonantsF_to_NG100_mu=weighted_average(consonantsF_to_NG100)
+consonantsF_to_NG100_mu2=mean(consonantsF_to_NG100$Confusability)
+```
+```{r make_slow_shift_consonantsF_to_NG_df}
+slow_shift_consonantsF_to_NG_df <- data.frame (
+  mus = c(consonantsF_to_NG100_mu),
+  mus2= c(consonantsF_to_NG100_mu2),
+  labels = c(1.0)
+)
+slow_shift_consonantsF_to_NG_df$Name<-"consonantsF_to_NG"
+```
+
+
+```{r load_slow_shift_consonantsJH_to_CH_data,cache=TRUE}
+consonantsJH_to_CH100=read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/slow_shift_consonantsJH_to_CH_True_100_percent2.csv")
+consonantsJH_to_CH100_mu=weighted_average(consonantsJH_to_CH100)
+consonantsJH_to_CH100_mu2=mean(consonantsJH_to_CH100$Confusability)
+```
+```{r make_slow_shift_consonantsJH_to_CH_df}
+slow_shift_consonantsJH_to_CH_df <- data.frame (
+  mus = c(consonantsJH_to_CH100_mu),
+  mus2= c(consonantsJH_to_CH100_mu2),
+  labels = c(1.0)
+)
+slow_shift_consonantsJH_to_CH_df$Name<-"consonantsJH_to_CH"
+```
+
+
+```{r load_slow_shift_consonantsM_to_DH_data,cache=TRUE}
+consonantsM_to_DH100=read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/slow_shift_consonantsM_to_DH_True_100_percent2.csv")
+consonantsM_to_DH100_mu=weighted_average(consonantsM_to_DH100)
+consonantsM_to_DH100_mu2=mean(consonantsM_to_DH100$Confusability)
+```
+```{r make_slow_shift_consonantsM_to_DH_df}
+slow_shift_consonantsM_to_DH_df <- data.frame (
+  mus = c(consonantsM_to_DH100_mu),
+  mus2= c(consonantsM_to_DH100_mu2),
+  labels = c(1.0)
+)
+slow_shift_consonantsM_to_DH_df$Name<-"consonantsM_to_DH"
+```
+
+
+```{r load_slow_shift_consonantsNG_to_ZH_data,cache=TRUE}
+consonantsNG_to_ZH100=read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/slow_shift_consonantsNG_to_ZH_True_100_percent2.csv")
+consonantsNG_to_ZH100_mu=weighted_average(consonantsNG_to_ZH100)
+consonantsNG_to_ZH100_mu2=mean(consonantsNG_to_ZH100$Confusability)
+```
+```{r make_slow_shift_consonantsNG_to_ZH_df}
+slow_shift_consonantsNG_to_ZH_df <- data.frame (
+  mus = c(consonantsNG_to_ZH100_mu),
+  mus2= c(consonantsNG_to_ZH100_mu2),
+  labels = c(1.0)
+)
+slow_shift_consonantsNG_to_ZH_df$Name<-"consonantsNG_to_ZH"
+```
+
+
+```{r load_slow_shift_consonantsN_to_CH_data,cache=TRUE}
+consonantsN_to_CH100=read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/slow_shift_consonantsN_to_CH_True_100_percent2.csv")
+consonantsN_to_CH100_mu=weighted_average(consonantsN_to_CH100)
+consonantsN_to_CH100_mu2=mean(consonantsN_to_CH100$Confusability)
+```
+```{r make_slow_shift_consonantsN_to_CH_df}
+slow_shift_consonantsN_to_CH_df <- data.frame (
+  mus = c(consonantsN_to_CH100_mu),
+  mus2= c(consonantsN_to_CH100_mu2),
+  labels = c(1.0)
+)
+slow_shift_consonantsN_to_CH_df$Name<-"consonantsN_to_CH"
+```
+
+
+```{r load_slow_shift_consonantsP_to_JH_data,cache=TRUE}
+consonantsP_to_JH100=read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/slow_shift_consonantsP_to_JH_True_100_percent2.csv")
+consonantsP_to_JH100_mu=weighted_average(consonantsP_to_JH100)
+consonantsP_to_JH100_mu2=mean(consonantsP_to_JH100$Confusability)
+```
+```{r make_slow_shift_consonantsP_to_JH_df}
+slow_shift_consonantsP_to_JH_df <- data.frame (
+  mus = c(consonantsP_to_JH100_mu),
+  mus2= c(consonantsP_to_JH100_mu2),
+  labels = c(1.0)
+)
+slow_shift_consonantsP_to_JH_df$Name<-"consonantsP_to_JH"
+```
+
+
+```{r load_slow_shift_consonantsTH_to_B_data,cache=TRUE}
+consonantsTH_to_B100=read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/slow_shift_consonantsTH_to_B_True_100_percent2.csv")
+consonantsTH_to_B100_mu=weighted_average(consonantsTH_to_B100)
+consonantsTH_to_B100_mu2=mean(consonantsTH_to_B100$Confusability)
+```
+```{r make_slow_shift_consonantsTH_to_B_df}
+slow_shift_consonantsTH_to_B_df <- data.frame (
+  mus = c(consonantsTH_to_B100_mu),
+  mus2= c(consonantsTH_to_B100_mu2),
+  labels = c(1.0)
+)
+slow_shift_consonantsTH_to_B_df$Name<-"consonantsTH_to_B"
+```
+
+
+```{r load_slow_shift_consonantsT_to_D_data,cache=TRUE}
+consonantsT_to_D100=read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/slow_shift_consonantsT_to_D_True_100_percent2.csv")
+consonantsT_to_D100_mu=weighted_average(consonantsT_to_D100)
+consonantsT_to_D100_mu2=mean(consonantsT_to_D100$Confusability)
+```
+```{r make_slow_shift_consonantsT_to_D_df}
+slow_shift_consonantsT_to_D_df <- data.frame (
+  mus = c(consonantsT_to_D100_mu),
+  mus2= c(consonantsT_to_D100_mu2),
+  labels = c(1.0)
+)
+slow_shift_consonantsT_to_D_df$Name<-"consonantsT_to_D"
+```
+
+
+```{r load_slow_shift_consonantsT_to_M_data,cache=TRUE}
+consonantsT_to_M100=read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/slow_shift_consonantsT_to_M_True_100_percent2.csv")
+consonantsT_to_M100_mu=weighted_average(consonantsT_to_M100)
+consonantsT_to_M100_mu2=mean(consonantsT_to_M100$Confusability)
+```
+```{r make_slow_shift_consonantsT_to_M_df}
+slow_shift_consonantsT_to_M_df <- data.frame (
+  mus = c(consonantsT_to_M100_mu),
+  mus2= c(consonantsT_to_M100_mu2),
+  labels = c(1.0)
+)
+slow_shift_consonantsT_to_M_df$Name<-"consonantsT_to_M"
+```
+
+
+```{r load_slow_shift_consonantsY_to_D_data,cache=TRUE}
+consonantsY_to_D100=read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/slow_shift_consonantsY_to_D_True_100_percent2.csv")
+consonantsY_to_D100_mu=weighted_average(consonantsY_to_D100)
+consonantsY_to_D100_mu2=mean(consonantsY_to_D100$Confusability)
+```
+```{r make_slow_shift_consonantsY_to_D_df}
+slow_shift_consonantsY_to_D_df <- data.frame (
+  mus = c(consonantsY_to_D100_mu),
+  mus2= c(consonantsY_to_D100_mu2),
+  labels = c(1.0)
+)
+slow_shift_consonantsY_to_D_df$Name<-"consonantsY_to_D"
+```
+
+
+```{r load_slow_shift_vowelsAA1_to_IH1_data,cache=TRUE}
+vowelsAA1_to_IH1100=read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/slow_shift_vowelsAA1_to_IH1_True_100_percent2.csv")
+vowelsAA1_to_IH1100_mu=weighted_average(vowelsAA1_to_IH1100)
+vowelsAA1_to_IH1100_mu2=mean(vowelsAA1_to_IH1100$Confusability)
+```
+```{r make_slow_shift_vowelsAA1_to_IH1_df}
+slow_shift_vowelsAA1_to_IH1_df <- data.frame (
+  mus = c(vowelsAA1_to_IH1100_mu),
+  mus2= c(vowelsAA1_to_IH1100_mu2),
+  labels = c(1.0)
+)
+slow_shift_vowelsAA1_to_IH1_df$Name<-"vowelsAA1_to_IH1"
+```
+
+
+```{r load_slow_shift_vowelsAE1_to_EH1_data,cache=TRUE}
+vowelsAE1_to_EH1100=read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/slow_shift_vowelsAE1_to_EH1_True_100_percent2.csv")
+vowelsAE1_to_EH1100_mu=weighted_average(vowelsAE1_to_EH1100)
+vowelsAE1_to_EH1100_mu2=mean(vowelsAE1_to_EH1100$Confusability)
+```
+```{r make_slow_shift_vowelsAE1_to_EH1_df}
+slow_shift_vowelsAE1_to_EH1_df <- data.frame (
+  mus = c(vowelsAE1_to_EH1100_mu),
+  mus2= c(vowelsAE1_to_EH1100_mu2),
+  labels = c(1.0)
+)
+slow_shift_vowelsAE1_to_EH1_df$Name<-"vowelsAE1_to_EH1"
+```
+
+
+```{r load_slow_shift_vowelsAO1_to_AH1_data,cache=TRUE}
+vowelsAO1_to_AH1100=read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/slow_shift_vowelsAO1_to_AH1_True_100_percent2.csv")
+vowelsAO1_to_AH1100_mu=weighted_average(vowelsAO1_to_AH1100)
+vowelsAO1_to_AH1100_mu2=mean(vowelsAO1_to_AH1100$Confusability)
+```
+```{r make_slow_shift_vowelsAO1_to_AH1_df}
+slow_shift_vowelsAO1_to_AH1_df <- data.frame (
+  mus = c(vowelsAO1_to_AH1100_mu),
+  mus2= c(vowelsAO1_to_AH1100_mu2),
+  labels = c(1.0)
+)
+slow_shift_vowelsAO1_to_AH1_df$Name<-"vowelsAO1_to_AH1"
+```
+
+
+```{r load_slow_shift_vowelsAY1_to_OW1_data,cache=TRUE}
+vowelsAY1_to_OW1100=read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/slow_shift_vowelsAY1_to_OW1_True_100_percent2.csv")
+vowelsAY1_to_OW1100_mu=weighted_average(vowelsAY1_to_OW1100)
+vowelsAY1_to_OW1100_mu2=mean(vowelsAY1_to_OW1100$Confusability)
+```
+```{r make_slow_shift_vowelsAY1_to_OW1_df}
+slow_shift_vowelsAY1_to_OW1_df <- data.frame (
+  mus = c(vowelsAY1_to_OW1100_mu),
+  mus2= c(vowelsAY1_to_OW1100_mu2),
+  labels = c(1.0)
+)
+slow_shift_vowelsAY1_to_OW1_df$Name<-"vowelsAY1_to_OW1"
+```
+
+
+```{r load_slow_shift_vowelsEH1_to_EY1_data,cache=TRUE}
+vowelsEH1_to_EY1100=read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/slow_shift_vowelsEH1_to_EY1_True_100_percent2.csv")
+vowelsEH1_to_EY1100_mu=weighted_average(vowelsEH1_to_EY1100)
+vowelsEH1_to_EY1100_mu2=mean(vowelsEH1_to_EY1100$Confusability)
+```
+```{r make_slow_shift_vowelsEH1_to_EY1_df}
+slow_shift_vowelsEH1_to_EY1_df <- data.frame (
+  mus = c(vowelsEH1_to_EY1100_mu),
+  mus2= c(vowelsEH1_to_EY1100_mu2),
+  labels = c(1.0)
+)
+slow_shift_vowelsEH1_to_EY1_df$Name<-"vowelsEH1_to_EY1"
+```
+
+
+```{r load_slow_shift_vowelsEH1_to_OW1_data,cache=TRUE}
+vowelsEH1_to_OW1100=read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/slow_shift_vowelsEH1_to_OW1_True_100_percent2.csv")
+vowelsEH1_to_OW1100_mu=weighted_average(vowelsEH1_to_OW1100)
+vowelsEH1_to_OW1100_mu2=mean(vowelsEH1_to_OW1100$Confusability)
+```
+```{r make_slow_shift_vowelsEH1_to_OW1_df}
+slow_shift_vowelsEH1_to_OW1_df <- data.frame (
+  mus = c(vowelsEH1_to_OW1100_mu),
+  mus2= c(vowelsEH1_to_OW1100_mu2),
+  labels = c(1.0)
+)
+slow_shift_vowelsEH1_to_OW1_df$Name<-"vowelsEH1_to_OW1"
+```
+
+
+```{r load_slow_shift_vowelsIH1_to_UH1_data,cache=TRUE}
+vowelsIH1_to_UH1100=read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/slow_shift_vowelsIH1_to_UH1_True_100_percent2.csv")
+vowelsIH1_to_UH1100_mu=weighted_average(vowelsIH1_to_UH1100)
+vowelsIH1_to_UH1100_mu2=mean(vowelsIH1_to_UH1100$Confusability)
+```
+```{r make_slow_shift_vowelsIH1_to_UH1_df}
+slow_shift_vowelsIH1_to_UH1_df <- data.frame (
+  mus = c(vowelsIH1_to_UH1100_mu),
+  mus2= c(vowelsIH1_to_UH1100_mu2),
+  labels = c(1.0)
+)
+slow_shift_vowelsIH1_to_UH1_df$Name<-"vowelsIH1_to_UH1"
+```
+
+
+```{r load_slow_shift_vowelsUW1_to_IH1_data,cache=TRUE}
+vowelsUW1_to_IH1100=read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/slow_shift_vowelsUW1_to_IH1_True_100_percent2.csv")
+vowelsUW1_to_IH1100_mu=weighted_average(vowelsUW1_to_IH1100)
+vowelsUW1_to_IH1100_mu2=mean(vowelsUW1_to_IH1100$Confusability)
+```
+```{r make_slow_shift_vowelsUW1_to_IH1_df}
+slow_shift_vowelsUW1_to_IH1_df <- data.frame (
+  mus = c(vowelsUW1_to_IH1100_mu),
+  mus2= c(vowelsUW1_to_IH1100_mu2),
+  labels = c(1.0)
+)
+slow_shift_vowelsUW1_to_IH1_df$Name<-"vowelsUW1_to_IH1"
+```
+
+
+```{r load_slow_shift_vowelsUW1_to_OW1_data,cache=TRUE}
+vowelsUW1_to_OW1100=read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/slow_shift_vowelsUW1_to_OW1_True_100_percent2.csv")
+vowelsUW1_to_OW1100_mu=weighted_average(vowelsUW1_to_OW1100)
+vowelsUW1_to_OW1100_mu2=mean(vowelsUW1_to_OW1100$Confusability)
+```
+```{r make_slow_shift_vowelsUW1_to_OW1_df}
+slow_shift_vowelsUW1_to_OW1_df <- data.frame (
+  mus = c(vowelsUW1_to_OW1100_mu),
+  mus2= c(vowelsUW1_to_OW1100_mu2),
+  labels = c(1.0)
+)
+slow_shift_vowelsUW1_to_OW1_df$Name<-"vowelsUW1_to_OW1"
+```
+
+
+```{r load_slow_shift_vowelsUW1_to_UH1_data,cache=TRUE}
+vowelsUW1_to_UH1100=read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/slow_shift_vowelsUW1_to_UH1_True_100_percent2.csv")
+vowelsUW1_to_UH1100_mu=weighted_average(vowelsUW1_to_UH1100)
+vowelsUW1_to_UH1100_mu2=mean(vowelsUW1_to_UH1100$Confusability)
+```
+```{r make_slow_shift_vowelsUW1_to_UH1_df}
+slow_shift_vowelsUW1_to_UH1_df <- data.frame (
+  mus = c(vowelsUW1_to_UH1100_mu),
+  mus2= c(vowelsUW1_to_UH1100_mu2),
+  labels = c(1.0)
+)
+slow_shift_vowelsUW1_to_UH1_df$Name<-"vowelsUW1_to_UH1"
+```
+
+```{r make_slow_shift_big_df}
+slow_shift_big <- rbind(slow_shift_consonantsF_to_NG_df,slow_shift_consonantsJH_to_CH_df,slow_shift_consonantsM_to_DH_df,slow_shift_consonantsNG_to_ZH_df,slow_shift_consonantsN_to_CH_df,slow_shift_consonantsP_to_JH_df,slow_shift_consonantsTH_to_B_df,slow_shift_consonantsT_to_D_df,slow_shift_consonantsT_to_M_df,slow_shift_consonantsY_to_D_df,slow_shift_vowelsAA1_to_IH1_df,slow_shift_vowelsAE1_to_EH1_df,slow_shift_vowelsAO1_to_AH1_df,slow_shift_vowelsAY1_to_OW1_df,slow_shift_vowelsEH1_to_EY1_df,slow_shift_vowelsEH1_to_OW1_df,slow_shift_vowelsIH1_to_UH1_df,slow_shift_vowelsUW1_to_IH1_df,slow_shift_vowelsUW1_to_OW1_df,slow_shift_vowelsUW1_to_UH1_df)
+```
+
+```{r load slow_shift_func_df}
+slow_shift_func = data.frame(
+    MinPairs = c(0, 11, 2, 0, 25, 23, 6, 51, 59, 11, 277, 304, 117, 190, 237, 184, 62, 215, 162, 23),
+    TotalChecked = c(1139, 468, 2703, 1103, 10469, 2561, 248, 3892, 3892, 859, 3982, 6878, 1445, 3237, 6677, 6677, 18506, 2415, 2415, 2415),
+    Name = c("F_to_NG", "JH_to_CH", "M_to_DH", "NG_to_ZH", "N_to_CH", "P_to_JH", "TH_to_B", "T_to_D", "T_to_M", "Y_to_D", "AA1_to_IH1", "AE1_to_EH1", "AO1_to_AH1", "AY1_to_OW1", "EH1_to_EY1", "EH1_to_OW1", "IH1_to_UH1", "UW1_to_IH1", "UW1_to_OW1", "UW1_to_UH1"),
+    Type = c("RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger"),
+    P1toP2 = c("4.37667407783e-06", "0.0166363388817", "0.00208332432865", "0.00421933479274", "4.35841893995e-06", "4.43213296399e-06", "0.00630693453852", "4.35841893995e-06", "4.35841893995e-06", "1.72173344123e-05", "2.22766763199e-06", "0.0722735618381", "0.0400021947874", "2.13117374394e-06", "0.0323551038062", "2.16262975779e-06", "2.16262975779e-06", "0.00148147823956", "0.00591934806204", "0.124262543328"),
+    P2toP1 = c("1.76541204717e-05", "0.00624132848665", "4.35841893995e-06", "1.75066963113e-05", "4.32224964449e-06", "4.32224964449e-06", "0.0209687556312", "0.00209204109117", "4.32224964449e-06", "4.35841893995e-06", "0.00147275086505", "0.0823551038062", "0.10222441701", "0.00146198518834", "0.0204102882302", "2.13117374394e-06", "0.00299625300298", "0.00147275086505", "0.0204400873781", "0.0583854745599"))
+```
+
+
+
+```{r loading reduced stuff,cache=TRUE}
+reduced_F_to_NG <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/cleaned_up_F_to_NG.csv")
+reduced_F_to_NG$Name <- "F_to_NG"
+reduced_JH_to_CH <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/cleaned_up_JH_to_CH.csv")
+reduced_JH_to_CH$Name <- "JH_to_CH"
+reduced_M_to_DH <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/cleaned_up_M_to_DH.csv")
+reduced_M_to_DH$Name <- "M_to_DH"
+reduced_NG_to_ZH <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/cleaned_up_NG_to_ZH.csv")
+reduced_NG_to_ZH$Name <- "NG_to_ZH"
+reduced_N_to_CH <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/cleaned_up_N_to_CH.csv")
+reduced_N_to_CH$Name <- "N_to_CH"
+reduced_P_to_JH <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/cleaned_up_P_to_JH.csv")
+reduced_P_to_JH$Name <- "P_to_JH"
+reduced_TH_to_B <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/cleaned_up_TH_to_B.csv")
+reduced_TH_to_B$Name <- "TH_to_B"
+reduced_T_to_D <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/cleaned_up_T_to_D.csv")
+reduced_T_to_D$Name <- "T_to_D"
+reduced_T_to_M <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/cleaned_up_T_to_M.csv")
+reduced_T_to_M$Name <- "T_to_M"
+reduced_Y_to_D <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/cleaned_up_Y_to_D.csv")
+reduced_Y_to_D$Name <- "Y_to_D"
+reduced_AA1_to_IH1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/cleaned_up_AA1_to_IH1.csv")
+reduced_AA1_to_IH1$Name <- "AA1_to_IH1"
+reduced_AE1_to_EH1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/cleaned_up_AE1_to_EH1.csv")
+reduced_AE1_to_EH1$Name <- "AE1_to_EH1"
+reduced_AO1_to_AH1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/cleaned_up_AO1_to_AH1.csv")
+reduced_AO1_to_AH1$Name <- "AO1_to_AH1"
+reduced_AY1_to_OW1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/cleaned_up_AY1_to_OW1.csv")
+reduced_AY1_to_OW1$Name <- "AY1_to_OW1"
+reduced_EH1_to_EY1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/cleaned_up_EH1_to_EY1.csv")
+reduced_EH1_to_EY1$Name <- "EH1_to_EY1"
+reduced_EH1_to_OW1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/cleaned_up_EH1_to_OW1.csv")
+reduced_EH1_to_OW1$Name <- "EH1_to_OW1"
+reduced_IH1_to_UH1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/cleaned_up_IH1_to_UH1.csv")
+reduced_IH1_to_UH1$Name <- "IH1_to_UH1"
+reduced_UW1_to_IH1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/cleaned_up_UW1_to_IH1.csv")
+reduced_UW1_to_IH1$Name <- "UW1_to_IH1"
+reduced_UW1_to_OW1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/cleaned_up_UW1_to_OW1.csv")
+reduced_UW1_to_OW1$Name <- "UW1_to_OW1"
+reduced_UW1_to_UH1 <- read.csv("/Users/zburchill/Documents/workspace2/pypytest/src/cleaned_up_UW1_to_UH1.csv")
+reduced_UW1_to_UH1$Name <- "UW1_to_UH1"
+
+reduced_df <- rbind(reduced_F_to_NG,reduced_JH_to_CH,reduced_M_to_DH,reduced_NG_to_ZH,reduced_N_to_CH,reduced_P_to_JH,reduced_TH_to_B,reduced_T_to_D,reduced_T_to_M,reduced_Y_to_D,reduced_AA1_to_IH1,reduced_AE1_to_EH1,reduced_AO1_to_AH1,reduced_AY1_to_OW1,reduced_EH1_to_EY1,reduced_EH1_to_OW1,reduced_IH1_to_UH1,reduced_UW1_to_IH1,reduced_UW1_to_OW1,reduced_UW1_to_UH1) %>% 
+    dplyr::group_by(Name) %>%
+    tidyr::nest() %>%
+    dplyr::mutate(ReducedMu = purrr::map(data,~1-weighted_average(.)) %>% purrr::simplify(),
+                  ReducedMu2= purrr::map(data,~1-mean(.$Confusability)) %>% purrr::simplify()) %>%
+    select(Name,ReducedMu,ReducedMu2)
+```
+
+```{r load pin_pen_simple_func_with_confs}
+simple_vowel_confs = data.frame(
+    MinPairs = c(132, 184, 63, 33, 9, 193, 41, 33, 53, 279, 30, 133, 221, 237, 117, 22, 167, 29, 203, 140),
+    TotalChecked = c(1445, 3391, 486, 1445, 979, 2415, 979, 299, 24559, 5038, 299, 2415, 24559, 6677, 24559, 24559, 3391, 6878, 5038, 2415),
+    Name = c("AO1_to_EY1", "OW1_to_EH1", "UH1_to_IH1", "AO1_to_OY1", "AW1_to_UH1", "UW1_to_EY1", "AW1_to_ER1", "OY1_to_AO1", "AH1_to_AW1", "EY1_to_IY1", "OY1_to_UW1", "UW1_to_AH1", "AH1_to_AA1", "EH1_to_EY1", "AH1_to_AO1", "AH1_to_OY1", "OW1_to_AA1", "AE1_to_OY1", "EY1_to_AA1", "UW1_to_EH1"),
+    Type = c("RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger"),
+    P1toP2 = c("0.00444663923182", "2.13117374394e-06", "0.00299625300298", "0.00740960219479", "0.00147928671326", "0.00148147823956", "0.00147928671326", "0.00435624293006", "0.0118540466392", "0.0204102882302", "0.00435624293006", "0.0192329575295", "0.157039231824", "0.0323551038062", "0.10222441701", "0.00148367626886", "0.0218999413927", "2.17540745382e-06", "2.12496493808e-06", "0.00148147823956"),
+    P2toP1 = c("2.12496493808e-06", "2.16262975779e-06", "2.16262975779e-06", "0.00435624293006", "0.0119782889311", "2.12496493808e-06", "2.10650044974e-06", "0.00740960219479", "0.00738770621104", "2.12496493808e-06", "0.0088779279437", "2.19478737997e-06", "0.168658944086", "0.0204102882302", "0.0400021947874", "0.00145348531032", "0.00447983960793", "2.10650044974e-06", "0.0223902873691", "2.16262975779e-06"))
+```
+
+```{r load pin_pen_conditional_func_with_confs}
+complex_vowel_confs = data.frame(
+    MinPairs = c(218, 22, 117, 206, 104, 41, 243, 243, 190, 253, 314, 275, 210, 244, 104, 241, 27, 30, 45, 170),
+    TotalChecked = c(6878, 24559, 1445, 1445, 1445, 979, 3237, 3237, 3237, 5038, 18506, 18506, 18506, 4216, 3391, 3391, 3391, 299, 486, 2415),
+    Name = c("AE1_to_AY1", "AH1_to_OY1", "AO1_to_AH1", "AO1_to_IH1", "AO1_to_OW1", "AW1_to_ER1", "AY1_to_EY1", "AY1_to_IY1", "AY1_to_OW1", "EY1_to_AE1", "IH1_to_EH1", "IH1_to_EY1", "IH1_to_UW1", "IY1_to_AY1", "OW1_to_AO1", "OW1_to_IY1", "OW1_to_UH1", "OY1_to_UW1", "UH1_to_IY1", "UW1_to_AY1"),
+    Type = c("RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger", "RandomMerger"),
+    P1toP2 = c("0.00147710166114", "0.00148367626886", "0.0400021947874", "2.19478737997e-06", "0.00444663923182", "0.00147928671326", "0.00438169321754", "0.00292183920294", "2.13117374394e-06", "0.0320720958104", "0.0647080449827", "0.0117668685121", "0.00147275086505", "0.0043753028075", "0.00292183920294", "2.13117374394e-06", "0.0204400873781", "0.00435624293006", "2.24102692818e-06", "0.00296076818039"),
+    P2toP1 = c("2.13117374394e-06", "0.00145348531032", "0.10222441701", "0.00294333910035", "0.00292183920294", "2.10650044974e-06", "0.00291757685998", "0.0043753028075", "0.00146198518834", "0.0442499630181", "0.0264727508651", "0.0276989179679", "0.00148147823956", "0.00292183920294", "0.00444663923182", "2.12496493808e-06", "0.0149723009072", "0.0088779279437", "2.12496493808e-06", "2.13117374394e-06"))
+```
+
+
+```{r formatting actual mergers}
+caughtcot %<>% dplyr::group_by(Name,Type) %>%
+    tidyr::nest() %>%
+    dplyr::mutate(
+      UnWeightedMean = purrr::map(data,~mean(1-.$Confusability)) %>% purrr::simplify(),
+      WeightedMean = purrr::map(data,~1-weighted_average(.)) %>% purrr::simplify())
+
+caughtcot_artificial %<>% dplyr::group_by(Name,Type) %>%
+    tidyr::nest() %>%
+    dplyr::mutate(
+      UnWeightedMean = purrr::map(data,~mean(1-.$Confusability)) %>% purrr::simplify(),
+      WeightedMean = purrr::map(data,~1-weighted_average(.)) %>% purrr::simplify())
+
+pinpen %<>% dplyr::group_by(Name,Type) %>%
+    tidyr::nest() %>%
+    dplyr::mutate(
+      UnWeightedMean = purrr::map(data,~mean(1-.$Confusability)) %>% purrr::simplify(),
+      WeightedMean = purrr::map(data,~1-weighted_average(.)) %>% purrr::simplify())
+
+foolfull %<>% dplyr::group_by(Name,Type) %>%
+    tidyr::nest() %>%
+    dplyr::mutate(
+      UnWeightedMean = purrr::map(data,~mean(1-.$Confusability)) %>% purrr::simplify(),
+      WeightedMean = purrr::map(data,~1-weighted_average(.)) %>% purrr::simplify())
+
+stillsteel %<>% dplyr::group_by(Name,Type) %>%
+    tidyr::nest() %>%
+    dplyr::mutate(
+      UnWeightedMean = purrr::map(data,~mean(1-.$Confusability)) %>% purrr::simplify(),
+      WeightedMean = purrr::map(data,~1-weighted_average(.)) %>% purrr::simplify())
+
+th_fronting %<>% dplyr::group_by(Name,Type) %>%
+    tidyr::nest() %>%
+    dplyr::mutate(
+      UnWeightedMean = purrr::map(data,~mean(1-.$Confusability)) %>% purrr::simplify(),
+      WeightedMean = purrr::map(data,~1-weighted_average(.)) %>% purrr::simplify())
+
+th_stopping %<>% dplyr::group_by(Name,Type) %>%
+    tidyr::nest() %>%
+    dplyr::mutate(
+      UnWeightedMean = purrr::map(data,~mean(1-.$Confusability)) %>% purrr::simplify(),
+      WeightedMean = purrr::map(data,~1-weighted_average(.)) %>% purrr::simplify())
+```
+
+```{r adding on the actual mergers}
+caught_cot_df <- rbind(pin_pen_simple_sub_df,caughtcot_artificial)
+caught_cot_df$Merger <- "Caught-Cot Merger"
+pin_pen_conditional_df <- rbind(pin_pen_conditional_df,pinpen)
+pin_pen_conditional_df$Merger <- "Pin-Pen Merger"
+th_stopping_df <- rbind(th_stopping_df,th_stopping)
+th_stopping_df$Merger <- "TH-Fronting"
+th_fronting_df <- rbind(th_fronting_df,th_fronting)
+th_fronting_df$Merger <- "TH-Stopping"
+fool_full_df <- rbind(fool_full_df,foolfull)
+fool_full_df$Merger <- "Fool-Full Merger"
+still_steel_df <- rbind(still_steel_df,stillsteel)
+still_steel_df$Merger <- "Still-Steel Merger"
+
+
+mega_df <- rbind(caught_cot_df,pin_pen_conditional_df,th_stopping_df,th_fronting_df,fool_full_df)
+```
+
+```{r putting the probabilities where they need to be}
+
+steel_weighted_labels <- still_steel_df %>% 
+  group_by(Merger) %>%
+  mutate(probs=prob_getter(WeightedMean,1-weighted_average(new_regular))) %>%
+  mutate(probs=probs-min(probs)) %>%
+  ungroup() %>%
+  subset(Type=="ActualMerger") %>%
+  mutate(probs=sapply(probs,function(x) sprintf("%.2f",x),USE.NAMES=FALSE)) %>% 
+  select(Name,Merger,Type,WeightedMean,probs)
+
+weighted_mean_labels <- mega_df %>%
+  group_by(Merger) %>%
+  mutate(probs=prob_getter(WeightedMean,1-weighted_average(old_regular))) %>%
+  mutate(probs=probs-min(probs)) %>%
+  ungroup() %>%
+  subset(Type=="ActualMerger") %>%
+  mutate(probs=sapply(probs,function(x) sprintf("%.2f",x),USE.NAMES=FALSE)) %>% select(Name,Merger,Type,WeightedMean,probs) %>%
+  rbind(.,steel_weighted_labels)
+
+
+
+steel_unweighted_labels <- still_steel_df %>% 
+  group_by(Merger) %>%
+  mutate(probs=prob_getter(UnWeightedMean,1-mean(new_regular$Confusability))) %>%
+  mutate(probs=probs-min(probs)) %>%
+  ungroup() %>%
+  subset(Type=="ActualMerger") %>%
+  mutate(probs=sapply(probs,function(x) sprintf("%.2f",x),USE.NAMES=FALSE)) %>% 
+  select(Name,Merger,Type,UnWeightedMean,probs)
+
+unweighted_mean_labels <- mega_df %>%
+  group_by(Merger) %>%
+  mutate(probs=prob_getter(UnWeightedMean,1-mean(old_regular$Confusability))) %>%
+  mutate(probs=probs-min(probs)) %>%
+  ungroup() %>%
+  subset(Type=="ActualMerger") %>%
+  mutate(probs=sapply(probs,function(x) sprintf("%.2f",x),USE.NAMES=FALSE)) %>% select(Name,Merger,Type,UnWeightedMean,probs) %>%
+  rbind(.,steel_unweighted_labels)
+
+mega_df <- rbind(mega_df,still_steel_df)
+
+
+# mega_df %>%
+#   group_by(Merger) %>%
+#   mutate(probs=prob_getter(WeightedMean,1-weighted_average(old_regular))) %>%
+#   mutate(probs=probs-min(probs)) %>%
+#   ungroup() %>%
+#   subset(Type=="ActualMerger") %>% select(Name,probs)
+# mega_df %>%
+#   group_by(Merger) %>%
+#   mutate(probs=prob_getter(UnWeightedMean,1-mean(old_regular$Confusability))) %>%
+#   mutate(probs=probs-min(probs)) %>%
+#   ungroup() %>%
+#   subset(Type=="ActualMerger") %>% select(Name,probs)
+```
+
+
+
+```{r WEIGHTED}
+
+pdf("~/Documents/lab_phon_weighted_test.pdf",width=6,height=3)
+weighted <- mega_df %>% ggplot(aes(x=Merger,
+                       y=WeightedMean/(1-weighted_average(old_regular)),
+                       color=Type)) +
+  stat_summary(data = mega_df[mega_df$Type=="RandomMerger",],
+               geom="point",
+               fun.y=mean,
+               size=3) +
+  geom_point(data = mega_df[mega_df$Type=="RandomMerger",],
+             position = position_jitter(0.25),
+             alpha=0.2) +
+  geom_violin(data = mega_df[mega_df$Type=="RandomMerger",],
+              alpha=0) +
+#   stat_summary(geom="errorbar",width=0.5,
+#                data = mega_df[mega_df$Type=="RandomMerger",],
+#                fun.data=mean_cl_boot) + 
+  ylab("New FL (Token)") +
+  scale_color_discrete(name="Type of merger", 
+                       breaks=c("ActualMerger","RandomMerger"),
+                       labels=c("Attested","Chance")) +
+  geom_point(data = mega_df[mega_df$Type=="ActualMerger",],
+             size=3) +
+  theme(legend.position = c(0.25, .75),
+        strip.background = element_blank(),
+        strip.text.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank()) + 
+  facet_wrap(~Merger,nrow=1,scales = "free") +
+  geom_text_repel(aes(label=paste0("         p<",probs)),
+                  color="black",
+                   data=weighted_mean_labels,
+                  segment.size = 0,
+                   box.padding = unit(0.5, "lines"),
+                   show.legend = FALSE)
+weighted
+dev.off()
+
+weighted + scale_color_discrete(guide=FALSE)
+```
+
+```{r UNWEIGHTED}
+pdf("~/Documents/lab_phon_unweighted_test.pdf",width=6,height=3)
+unweighted <- mega_df %>% ggplot(aes(x=Merger,
+                       y=UnWeightedMean/(1-mean(old_regular$Confusability)),
+                       color=Type)) +
+  stat_summary(data = mega_df[mega_df$Type=="RandomMerger",],
+               geom="point",
+               fun.y=mean,
+               size=3) +
+  geom_point(data = mega_df[mega_df$Type=="RandomMerger",],
+             position = position_jitter(0.25),
+             alpha=0.2) +
+  geom_violin(data = mega_df[mega_df$Type=="RandomMerger",],
+              alpha=0) +
+#   stat_summary(geom="errorbar",width=0.5,
+#                data = mega_df[mega_df$Type=="RandomMerger",],
+#                fun.data=mean_cl_boot) + 
+  ylab("New FL (Type)") +
+  scale_color_discrete(name="Type of merger", 
+                       breaks=c("ActualMerger","RandomMerger"),
+                       labels=c("Attested","Random")) +
+  geom_point(data = mega_df[mega_df$Type=="ActualMerger",],
+             size=3) +
+  theme(legend.position = c(0.25, .75),
+        strip.background = element_blank(),
+        strip.text.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank()) +
+  facet_wrap(~Merger,nrow=1,scales = "free") +
+  geom_text_repel(aes(label=paste0("         p<",probs)),
+                  color="black",
+                   data=unweighted_mean_labels,
+                  segment.size = 0,
+                   box.padding = unit(0.5, "lines"),
+                   show.legend = FALSE)
+unweighted
+dev.off()
+```
+
+
+```{r MINIMAL PAIRS PLOT}
+pin_pen_simple_sub_func$Merger<-"Caught-Cot Merger"
+pin_pen_conditional_func$Merger<-"Pin-Pen Merger"
+th_stopping_func$Merger <-"TH-Stopping"
+th_fronting_func$Merger <-"TH-Fronting"
+fool_full_conditional_func$Merger<- "Fool-Full Merger"
+still_steel_conditional_func$Merger<- "Still-Steel Merger"
+
+
+mega_df_func <-rbind(pin_pen_simple_sub_func,
+                     pin_pen_conditional_func,
+                     th_stopping_func,
+                     th_fronting_func,
+                     fool_full_conditional_func,
+                     still_steel_conditional_func)
+mega_df_func$Type <- factor(mega_df_func$Type,
+                            levels=c("ActualMerger","RandomMerger"))
+minpairs_labels <- mega_df_func %>%
+  group_by(Merger) %>%
+  mutate(probs=prob_getter(MinPairs,0)) %>%
+  mutate(probs=probs-min(probs)) %>%
+  ungroup() %>%
+  subset(Type=="ActualMerger") %>%
+  mutate(probs=sapply(probs,function(x) sprintf("%.2f",x),USE.NAMES=FALSE)) %>% select(Name,Merger,Type,MinPairs,probs)
+
+
+pdf("~/Documents/lab_phon_functional_load_test.pdf",width=6,height=3)
+minpairs <- mega_df_func %>% ggplot(aes(x=Merger,
+                       y=MinPairs,
+                       color=Type)) +
+  stat_summary(data = mega_df_func[mega_df_func$Type=="RandomMerger",],
+               geom="point",
+               fun.y=mean,
+               size=3) +
+  geom_point(data = mega_df_func[mega_df_func$Type=="RandomMerger",],
+             position = position_jitter(0.25),
+             alpha=0.2) +
+  geom_violin(data = mega_df_func[mega_df_func$Type=="RandomMerger",],
+              alpha=0) +
+  geom_point(data = mega_df_func[mega_df_func$Type=="ActualMerger",],
+             size=3) +
+#   stat_summary(geom="errorbar",width=0.5,
+#                data = mega_df_func[mega_df_func$Type=="RandomMerger",],
+#                fun.data=mean_cl_boot) + 
+  ylab("Minimal Pairs") +
+  scale_color_discrete(name="Merger", 
+                       breaks=c("ActualMerger","RandomMerger"),
+                       labels=c("Attested","Chance")) +
+  theme(#legend.position = c(0.25, .75),
+        strip.background = element_blank(),
+        strip.text.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank()) +
+  facet_wrap(~Merger,nrow=1,scales = "free") +
+  geom_text_repel(aes(label=paste0("         p<",probs)),
+                  color="black",
+                   data=minpairs_labels,
+                  segment.size = 0,
+                   box.padding = unit(0.5, "lines"),
+                  force=3,
+                   show.legend = FALSE)
+minpairs
+dev.off()
+
+
+```
+
+```{r plotting the comparison}
+
+comp_legend<-g_legend(minpairs)
+
+layout1 <- rbind(c(1,2),
+                 c(3,2),
+                 c(4,2))
+
+pdf("~/Documents/comparison.pdf",width=6.6,height=4)
+grid.arrange(unweighted + xlab("") + 
+               scale_color_discrete(guide=FALSE) +
+               theme(axis.text.x=element_blank(),
+                     axis.ticks.x=element_blank()),
+             comp_legend,
+             weighted + xlab("") + 
+               scale_color_discrete(guide=FALSE) +
+               theme(axis.text.x=element_blank(),
+                     axis.ticks.x=element_blank()), 
+             minpairs+scale_color_discrete(guide=FALSE), 
+             ncol=2,nrow=3,
+             layout_matrix=layout1,
+             widths=c(6,0.85),heights=c(2,2,2))
+dev.off()
+
+```
+
+
+```{r combining functional_load_and_model}
+yuge_df <- left_join(mega_df_func %>% 
+                       mutate(Name=get_good_names(Name)) %>%
+                       select(Name,Type,Merger,MinPairs),
+                     mega_df %>% 
+                       mutate(Name=get_good_names(Name)) %>%
+                       select(Name,Merger,UnWeightedMean,WeightedMean),
+                     by=c("Name","Merger"))
+yuge_df %>%
+  ggplot(aes(x=UnWeightedMean,y=MinPairs,color=Type)) + 
+  geom_point() +
+  scale_color_discrete(guide=FALSE) +
+  geom_label_repel(aes(label=Name),
+                         #paste0(Name," ",Merger)),
+                   data=subset(yuge_df,
+                              Type=="ActualMerger" | WeightedMean > 0.047),
+                   box.padding = unit(0.5, "lines"),
+                   show.legend = FALSE)
+```
+
+```{r making_aprio_graph}
+pdf("~/Documents/lab_phon_simple_a_priori.pdf",width=4,height=3)
+simple_df <- data.frame(
+  increase=c(0.066,0.101),
+  percept_c=c("high","low")
+)
+simple_df %>% ggplot(aes(x=percept_c,y=increase,fill=percept_c)) + 
+  geom_bar(stat="identity") +
+  scale_y_continuous(name="Increase in word misrecognition rate",
+                     labels=scales::percent) +
+  scale_x_discrete(name="The initial confusability of the lost contrast",
+                   breaks=c("high","low"),
+                   labels=c("Highly confusable","Slightly confusable")) +
+  scale_fill_manual(guide=FALSE,
+                    breaks=c("high","low"),
+                    values = c("#4f81bd","#155096"))
+dev.off()
+
+# pin_pen_conditional_df %>% ggplot(aes(x=Type,y=WeightedMean/(1-weighted_average(regular)),color=Type)) + geom_point() + stat_summary(fun.data=mean_cl_boot,geom="errorbar") + stat_summary(fun.y=mean,geom="point",size=3)
+# 
+# pin_pen_conditional_func %>% ggplot(aes(x=Type,y=MinPairs,color=Type)) + geom_point() + stat_summary(fun.data=mean_cl_boot,geom="errorbar") + stat_summary(fun.y=mean,geom="point",size=3)
+# 
+# 
+# 
+# th_mergers_df %>% ggplot(aes(x=Type,y=WeightedMean,color=Type)) + geom_point() + stat_summary(fun.data=mean_cl_boot,geom="errorbar") + stat_summary(fun.y=mean,geom="point",size=3)
+# 
+# 
+# 
+# fool_full_df %>% ggplot(aes(x=Type,y=WeightedMean,color=Type)) + geom_point() + stat_summary(fun.data=mean_cl_boot,geom="errorbar") + stat_summary(fun.y=mean,geom="point",size=3)
+# 
+# fool_full_conditional_func %>% ggplot(aes(x=Type,y=MinPairs,color=Type)) + geom_point() + stat_summary(fun.data=mean_cl_boot,geom="errorbar") + stat_summary(fun.y=mean,geom="point",size=3)
+
+```
