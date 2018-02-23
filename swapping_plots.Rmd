@@ -1,6 +1,6 @@
 ---
 title: "Inspecting How Swapping Sounds Affects Word Recognition"
-output: html_document
+output: pdf_document  
 ---
 
 ```{r setup, include=FALSE}
