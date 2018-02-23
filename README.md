@@ -12,5 +12,5 @@ I uploaded this excerpt as a way of showcasing how far I've come in terms of man
 
 In `swapping_plots.Rmd`, which I made after I had learned a lot about `purrr` and the tidyverse, you can see how I read hundreds of files and save them hierarchically into a single data frame. From there I manipulate them in a variety of ways to investigate the hypotheses I had visually, and it's very compact and tidy. (However, since I intended it only to be used for personal perusal of the data, things aren't really labelled in a way that the layperson could probably understand.)
 
-I wrote `pre_tidyverse_loading.Rmd` before I learned all of this. It's from a different part of the project, and not runnable with the data here, but you can see how **horrible** it was. I actually used _Python_ to automatically generate most of the R code, it was so bad.
+I wrote `pre_tidyverse_loading.Rmd` before I learned all of this. It's from a different part of the project, and not runnable with the data here, but you can see how **horrible** it was. I actually used _Python_ to automatically generate most of the R code. It was that bad.
 
